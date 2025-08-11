@@ -1,6 +1,6 @@
 """Fairness metrics calculation utilities."""
 
-from typing import Dict, Any, Optional
+from typing import Dict
 import numpy as np
 import pandas as pd
 from sklearn.metrics import accuracy_score, precision_score, recall_score
@@ -34,11 +34,9 @@ class FairnessMetrics:
             'sensitive': sensitive_features
         })
         
-        # True positive rates by group
         tpr_by_group = df[df['y_true'] == 1].groupby('sensitive')['y_pred'].mean()
         tpr_diff = tpr_by_group.max() - tpr_by_group.min()
         
-        # False positive rates by group
         fpr_by_group = df[df['y_true'] == 0].groupby('sensitive')['y_pred'].mean()
         fpr_diff = fpr_by_group.max() - fpr_by_group.min()
         

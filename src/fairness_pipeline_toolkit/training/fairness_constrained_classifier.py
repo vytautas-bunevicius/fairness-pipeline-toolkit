@@ -4,7 +4,7 @@ from typing import Any, Optional, Dict
 import pandas as pd
 import numpy as np
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import LabelEncoder
 try:
     from fairlearn.reductions import ExponentiatedGradient, DemographicParity, EqualizedOdds
     FAIRLEARN_AVAILABLE = True
@@ -33,14 +33,12 @@ class FairnessConstrainedClassifier(FairClassifier):
         super().__init__(sensitive_features)
         
         if not FAIRLEARN_AVAILABLE:
-            # Fallback implementation when fairlearn is not available
             self.use_fairlearn = False
-            self.base_estimator = base_estimator or LogisticRegression(random_state=random_state)
+            self.base_estimator = base_estimator if base_estimator is not None else LogisticRegression(random_state=random_state)
         else:
             self.use_fairlearn = True
-            self.base_estimator = base_estimator or LogisticRegression(random_state=random_state)
+            self.base_estimator = base_estimator if base_estimator is not None else LogisticRegression(random_state=random_state)
             
-            # Set up constraint
             if constraint == "demographic_parity":
                 self.constraint = DemographicParity()
             elif constraint == "equalized_odds":
@@ -51,13 +49,16 @@ class FairnessConstrainedClassifier(FairClassifier):
             self.mitigator = ExponentiatedGradient(
                 estimator=self.base_estimator,
                 constraints=self.constraint,
-                max_iter=50,
+                max_iter=100,
                 nu=1e-6,
-                eta0=2.0
+                eta0=2.0,
+                eps=0.01
             )
         
         self.constraint_name = constraint
         self.random_state = random_state
+        self.categorical_encoders_ = {}
+        self.categorical_features_ = []
         
     def fit(self, X: pd.DataFrame, y: pd.Series, 
             sensitive_features: Optional[pd.DataFrame] = None) -> 'FairnessConstrainedClassifier':
@@ -73,21 +74,39 @@ class FairnessConstrainedClassifier(FairClassifier):
         """
         self._validate_input(X, y)
         
-        # Extract sensitive features from X if not provided separately
         if sensitive_features is None:
             if not self.sensitive_features:
                 raise ValueError("sensitive_features must be provided")
             sensitive_features = X[self.sensitive_features]
         
+        # Identify and encode categorical features
+        X_encoded = X.copy()
+        for col in X.columns:
+            if X[col].dtype in ['object', 'category']:
+                self.categorical_features_.append(col)
+                encoder = LabelEncoder()
+                X_encoded[col] = encoder.fit_transform(X[col].astype(str))
+                self.categorical_encoders_[col] = encoder
+        
+        # Encode categorical features in sensitive_features too
+        sensitive_features_encoded = sensitive_features.copy()
+        for col in sensitive_features.columns:
+            if sensitive_features[col].dtype in ['object', 'category']:
+                if col not in self.categorical_encoders_:
+                    encoder = LabelEncoder()
+                    sensitive_features_encoded[col] = encoder.fit_transform(sensitive_features[col].astype(str))
+                    self.categorical_encoders_[col] = encoder
+                else:
+                    sensitive_features_encoded[col] = self.categorical_encoders_[col].transform(sensitive_features[col].astype(str))
+        
         self.classes_ = np.unique(y)
+        self.original_columns_ = list(X_encoded.columns)  # Store original column order
         
         if self.use_fairlearn:
-            # Use Fairlearn implementation
-            self.mitigator.fit(X, y, sensitive_features=sensitive_features)
+            self.mitigator.fit(X_encoded, y, sensitive_features=sensitive_features_encoded)
         else:
-            # Fallback: simple fair classifier using post-processing
-            self.base_estimator.fit(X, y)
-            self._fit_threshold_optimization(X, y, sensitive_features)
+            self.base_estimator.fit(X_encoded, y)
+            self._fit_threshold_optimization(X_encoded, y, sensitive_features_encoded)
         
         self.is_fitted_ = True
         return self
@@ -95,10 +114,8 @@ class FairnessConstrainedClassifier(FairClassifier):
     def _fit_threshold_optimization(self, X: pd.DataFrame, y: pd.Series, 
                            sensitive_features: pd.DataFrame) -> None:
         """Optimize decision thresholds for fairness (fallback method)."""
-        # Simple post-processing approach
         base_predictions = self.base_estimator.predict_proba(X)[:, 1]
         
-        # Calculate group-specific thresholds to achieve fairness
         self.group_thresholds_ = {}
         
         for sensitive_col in sensitive_features.columns:
@@ -106,15 +123,12 @@ class FairnessConstrainedClassifier(FairClassifier):
             for group in sensitive_features[sensitive_col].unique():
                 mask = sensitive_features[sensitive_col] == group
                 group_probs = base_predictions[mask]
-                group_labels = y[mask]
                 
-                # Find threshold that balances fairness and accuracy
                 best_threshold = 0.5
                 if len(group_probs) > 0:
                     sorted_probs = np.sort(group_probs)
-                    pos_rate_target = y.mean()  # Overall positive rate
+                    pos_rate_target = y.mean()
                     
-                    # Find threshold closest to achieving target positive rate
                     for threshold in sorted_probs:
                         pred_pos_rate = (group_probs >= threshold).mean()
                         if abs(pred_pos_rate - pos_rate_target) < abs((group_probs >= best_threshold).mean() - pos_rate_target):
@@ -141,19 +155,56 @@ class FairnessConstrainedClassifier(FairClassifier):
         if sensitive_features is None:
             sensitive_features = X[self.sensitive_features]
         
+        # Check if we need to recombine features (when provided separately)
+        missing_cols = set(self.original_columns_) - set(X.columns)
+        if missing_cols:
+            # Recombine X and sensitive_features for sklearn compatibility
+            X_combined = X.copy()
+            for col in missing_cols:
+                if col in sensitive_features.columns:
+                    X_combined[col] = sensitive_features[col]
+            # Reorder columns to match original order
+            X = X_combined[self.original_columns_]
+        
+        # Encode features for prediction
+        X_encoded = X.copy()
+        for col in self.categorical_features_:
+            if col in X_encoded.columns:
+                encoder = self.categorical_encoders_[col]
+                try:
+                    X_encoded[col] = encoder.transform(X_encoded[col].astype(str))
+                except ValueError:
+                    # Handle unseen categories gracefully
+                    known_classes = set(encoder.classes_)
+                    X_encoded[col] = X_encoded[col].apply(
+                        lambda x: encoder.transform([str(x)])[0] if str(x) in known_classes 
+                        else encoder.transform([encoder.classes_[0]])[0]
+                    )
+        
+        # Encode sensitive features
+        sensitive_features_encoded = sensitive_features.copy()
+        for col in sensitive_features.columns:
+            if col in self.categorical_encoders_:
+                encoder = self.categorical_encoders_[col]
+                try:
+                    sensitive_features_encoded[col] = encoder.transform(sensitive_features[col].astype(str))
+                except ValueError:
+                    known_classes = set(encoder.classes_)
+                    sensitive_features_encoded[col] = sensitive_features[col].apply(
+                        lambda x: encoder.transform([str(x)])[0] if str(x) in known_classes 
+                        else encoder.transform([encoder.classes_[0]])[0]
+                    )
+        
         if self.use_fairlearn:
-            # Fairlearn ExponentiatedGradient predict method doesn't accept sensitive_features
-            return self.mitigator.predict(X)
+            return self.mitigator.predict(X_encoded)
         else:
-            # Fallback prediction with post-processing
-            base_probs = self.base_estimator.predict_proba(X)[:, 1]
-            predictions = np.zeros(len(X))
+            base_probs = self.base_estimator.predict_proba(X_encoded)[:, 1]
+            predictions = np.zeros(len(X_encoded))
             
-            # Apply group-specific thresholds
-            for sensitive_col in sensitive_features.columns:
-                for group in sensitive_features[sensitive_col].unique():
+            for sensitive_col in sensitive_features_encoded.columns:
+                for group in sensitive_features_encoded[sensitive_col].unique():
                     if group in self.group_thresholds_[sensitive_col]:
-                        mask = sensitive_features[sensitive_col] == group
+                        mask = sensitive_features_encoded[sensitive_col] == group
                         threshold = self.group_thresholds_[sensitive_col][group]
                         predictions[mask] = (base_probs[mask] >= threshold).astype(int)
             
@@ -173,20 +224,33 @@ class FairnessConstrainedClassifier(FairClassifier):
         self._check_is_fitted()
         self._validate_input(X)
         
+        # Encode features for prediction
+        X_encoded = X.copy()
+        for col in self.categorical_features_:
+            if col in X_encoded.columns:
+                encoder = self.categorical_encoders_[col]
+                try:
+                    X_encoded[col] = encoder.transform(X_encoded[col].astype(str))
+                except ValueError:
+                    known_classes = set(encoder.classes_)
+                    X_encoded[col] = X_encoded[col].apply(
+                        lambda x: encoder.transform([str(x)])[0] if str(x) in known_classes 
+                        else encoder.transform([encoder.classes_[0]])[0]
+                    )
+        
         if self.use_fairlearn:
-            # Fairlearn doesn't always support predict_proba, so we approximate
             predictions = self.predict(X, sensitive_features)
             n_samples = len(predictions)
             n_classes = len(self.classes_)
             probas = np.zeros((n_samples, n_classes))
             
             for i, pred in enumerate(predictions):
-                probas[i, pred] = 0.8  # High confidence for predicted class
-                probas[i, 1-pred] = 0.2  # Low confidence for other class
+                probas[i, pred] = 0.8
+                probas[i, 1-pred] = 0.2
             
             return probas
         else:
-            return self.base_estimator.predict_proba(X)
+            return self.base_estimator.predict_proba(X_encoded)
     
     def get_fairness_info(self) -> Dict[str, Any]:
         """Get information about fairness constraints and methods."""

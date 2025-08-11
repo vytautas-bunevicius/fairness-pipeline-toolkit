@@ -1,91 +1,183 @@
-"""Bias mitigation transformer for reducing disparate impact in datasets."""
+"""
+Bias mitigation approaches for fairness-aware machine learning.
+
+This module implements preprocessing transformations that reduce statistical disparities
+between demographic groups while preserving the underlying data relationships essential
+for accurate predictions. The transformer addresses the challenge of biased historical
+data by making feature distributions more equitable across protected groups.
+"""
 
 from typing import Optional, Dict, Any
 import pandas as pd
 import numpy as np
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.covariance import EmpiricalCovariance
 from .base_transformer import BaseTransformer
 
 
 class BiasMitigationTransformer(BaseTransformer):
-    """Mitigate bias by adjusting feature distributions across demographic groups."""
+    """
+    Reduces disparate impact by equalizing feature distributions across demographic groups.
+    
+    Traditional bias mitigation often destroys feature correlations, leading to poor model
+    performance. This transformer offers multiple strategies that balance fairness improvements
+    with predictive utility by preserving statistical relationships in the data.
+    """
     
     def __init__(self, sensitive_features: Optional[list] = None, 
-                 repair_level: float = 1.0, random_state: int = 42):
-        """Initialize bias mitigation transformer.
+                 repair_level: float = 1.0, random_state: int = 42,
+                 method: str = 'mean_matching'):
+        """
+        Initialize with configurable bias mitigation strategy.
         
-        Args:
-            sensitive_features: List of sensitive feature column names
-            repair_level: Level of repair to apply (0.0 to 1.0)
-            random_state: Random state for reproducibility
+        The repair_level controls the fairness-accuracy tradeoff: higher values increase
+        fairness at the potential cost of predictive performance. Different methods
+        preserve different aspects of the original data structure.
         """
         super().__init__(sensitive_features)
         self.repair_level = repair_level
         self.random_state = random_state
+        self.method = method
         self.scaler_ = StandardScaler()
+        self.categorical_encoders_ = {}
+        self.numerical_features_ = []
+        self.categorical_features_ = []
         self.feature_means_ = {}
         self.group_stats_ = {}
+        self.covariance_matrices_ = {}
+        self.overall_cov_ = None
+        np.random.seed(random_state)
         
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> 'BiasMitigationTransformer':
-        """Fit the transformer by computing group statistics.
+        """
+        Learn demographic group statistics to enable fair transformations.
         
-        Args:
-            X: Input features DataFrame
-            y: Target variable (optional)
-            
-        Returns:
-            Self for method chaining
+        Statistical disparities between groups indicate potential bias sources. By measuring
+        these differences during fitting, we can later apply corrections that move group
+        distributions toward equity while maintaining the mathematical relationships
+        necessary for accurate prediction.
         """
         self._validate_input(X)
         
-        # Identify non-sensitive features
         self.non_sensitive_features_ = [col for col in X.columns 
                                       if col not in self.sensitive_features]
         
         if not self.non_sensitive_features_:
             raise ValueError("At least one non-sensitive feature is required")
         
-        # Fit scaler on non-sensitive features
+        # Separate numerical and categorical features
         X_nonsensitive = X[self.non_sensitive_features_]
-        self.scaler_.fit(X_nonsensitive)
+        for col in X_nonsensitive.columns:
+            if X_nonsensitive[col].dtype in ['object', 'category']:
+                self.categorical_features_.append(col)
+            else:
+                self.numerical_features_.append(col)
         
-        # Compute group statistics for each sensitive attribute
+        # Encode categorical features
+        X_encoded = X_nonsensitive.copy()
+        for col in self.categorical_features_:
+            encoder = LabelEncoder()
+            X_encoded[col] = encoder.fit_transform(X_nonsensitive[col].astype(str))
+            self.categorical_encoders_[col] = encoder
+        
+        # Only fit scaler on encoded data
+        if len(X_encoded.columns) > 0:
+            self.scaler_.fit(X_encoded)
         for sensitive_attr in self.sensitive_features:
             group_stats = {}
+            group_covs = {}
+            
             for group_value in X[sensitive_attr].unique():
                 mask = X[sensitive_attr] == group_value
-                group_data = X_nonsensitive[mask]
+                group_data = X_encoded[mask]
                 
-                if len(group_data) > 0:
+                if len(group_data) > 1:
                     group_stats[group_value] = {
                         'mean': group_data.mean().to_dict(),
-                        'size': len(group_data)
+                        'size': len(group_data),
+                        'std': group_data.std().to_dict()
                     }
+                    
+                    if self.method in ['covariance_matching', 'multivariate_repair']:
+                        try:
+                            cov_est = EmpiricalCovariance().fit(group_data)
+                            group_covs[group_value] = cov_est.covariance_
+                        except (ValueError, np.linalg.LinAlgError):
+                            group_covs[group_value] = np.diag(group_data.var())
             
             self.group_stats_[sensitive_attr] = group_stats
+            self.covariance_matrices_[sensitive_attr] = group_covs
         
-        # Compute overall means
-        self.feature_means_ = X_nonsensitive.mean().to_dict()
+        self.feature_means_ = X_encoded.mean().to_dict()
+        if self.method in ['covariance_matching', 'multivariate_repair']:
+            try:
+                overall_cov_est = EmpiricalCovariance().fit(X_encoded)
+                self.overall_cov_ = overall_cov_est.covariance_
+            except (ValueError, np.linalg.LinAlgError):
+                self.overall_cov_ = np.diag(X_encoded.var())
         
         self.is_fitted_ = True
         return self
     
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
-        """Transform data to reduce disparate impact.
+        """
+        Apply learned corrections to reduce demographic disparities.
         
-        Args:
-            X: Input features DataFrame
-            
-        Returns:
-            Transformed DataFrame with reduced bias
+        The transformation adjusts feature values to make group distributions more equitable.
+        By interpolating between original group means and the overall population mean,
+        we reduce bias while controlling the degree of change through repair_level.
         """
         self._check_is_fitted()
         self._validate_input(X)
         
         X_transformed = X.copy()
         
-        # Apply bias mitigation to non-sensitive features
+        # Encode categorical features in non-sensitive features
+        for col in self.categorical_features_:
+            if col in X_transformed.columns:
+                encoder = self.categorical_encoders_[col]
+                # Handle unseen categories gracefully
+                try:
+                    X_transformed[col] = encoder.transform(X_transformed[col].astype(str))
+                except ValueError:
+                    # If new categories are found, use the most frequent class
+                    known_classes = set(encoder.classes_)
+                    X_transformed[col] = X_transformed[col].apply(
+                        lambda x: encoder.transform([str(x)])[0] if str(x) in known_classes 
+                        else encoder.transform([encoder.classes_[0]])[0]
+                    )
+        
+        if self.method == 'mean_matching':
+            X_transformed = self._apply_mean_matching(X_transformed)
+        elif self.method == 'covariance_matching':
+            X_transformed = self._apply_covariance_matching(X_transformed)
+        elif self.method == 'multivariate_repair':
+            X_transformed = self._apply_multivariate_repair(X_transformed)
+        else:
+            raise ValueError(f"Unknown method: {self.method}")
+        
+        # Decode categorical features back to original values
+        for col in self.categorical_features_:
+            if col in X_transformed.columns:
+                encoder = self.categorical_encoders_[col]
+                # Round to nearest integer before inverse transform
+                encoded_values = X_transformed[col].round().astype(int)
+                # Clip values to valid range
+                encoded_values = np.clip(encoded_values, 0, len(encoder.classes_) - 1)
+                X_transformed[col] = encoder.inverse_transform(encoded_values)
+        
+        return X_transformed
+    
+    def _apply_mean_matching(self, X: pd.DataFrame) -> pd.DataFrame:
+        """
+        Equalize group means while preserving individual variation patterns.
+        
+        This approach directly addresses statistical parity by moving group centroids
+        toward the population average. It's computationally efficient but may not
+        preserve complex multivariate relationships between features.
+        """
+        X_transformed = X.copy()
+        
         for sensitive_attr in self.sensitive_features:
             for group_value in X[sensitive_attr].unique():
                 if group_value not in self.group_stats_[sensitive_attr]:
@@ -94,28 +186,146 @@ class BiasMitigationTransformer(BaseTransformer):
                 mask = X[sensitive_attr] == group_value
                 group_means = self.group_stats_[sensitive_attr][group_value]['mean']
                 
-                # Apply repair by moving group means towards overall means
                 for feature in self.non_sensitive_features_:
                     if feature in group_means and feature in self.feature_means_:
+                        # Skip categorical features for bias mitigation (they're already encoded and shouldn't be arithmetically adjusted)
+                        if feature in self.categorical_features_:
+                            continue
+                            
                         group_mean = group_means[feature]
                         overall_mean = self.feature_means_[feature]
                         
-                        # Calculate mitigation adjustment
                         adjustment = self.repair_level * (overall_mean - group_mean)
                         X_transformed.loc[mask, feature] += adjustment
         
         return X_transformed
+    
+    def _apply_covariance_matching(self, X: pd.DataFrame) -> pd.DataFrame:
+        """
+        Adjust means while attempting to preserve feature correlation structure.
+        
+        Beyond simple mean equalization, this method tries to maintain the covariance
+        relationships that are often crucial for prediction accuracy. It's more complex
+        but potentially preserves model performance better than mean matching alone.
+        """
+        X_transformed = X.copy()
+        
+        for sensitive_attr in self.sensitive_features:
+            group_covs = self.covariance_matrices_[sensitive_attr]
+            
+            for group_value in X[sensitive_attr].unique():
+                if (group_value not in self.group_stats_[sensitive_attr] or 
+                    group_value not in group_covs):
+                    continue
+                
+                mask = X[sensitive_attr] == group_value
+                group_data = X_transformed.loc[mask, self.non_sensitive_features_].values
+                
+                if len(group_data) == 0:
+                    continue
+                
+                group_mean = np.array([self.group_stats_[sensitive_attr][group_value]['mean'][f] 
+                                     for f in self.non_sensitive_features_])
+                overall_mean = np.array([self.feature_means_[f] for f in self.non_sensitive_features_])
+                group_cov = group_covs[group_value]
+                
+                try:
+                    centered_data = group_data - group_mean
+                    
+                    mean_adjustment = self.repair_level * (overall_mean - group_mean)
+                    adjusted_data = centered_data + group_mean + mean_adjustment
+                    
+                    if len(adjusted_data) > 1:
+                        current_cov = np.cov(adjusted_data.T)
+                        if np.linalg.det(current_cov) > 1e-8 and np.linalg.det(group_cov) > 1e-8:
+                            scale_factor = np.sqrt(np.diag(group_cov) / (np.diag(current_cov) + 1e-8))
+                            scale_factor = np.clip(scale_factor, 0.5, 2.0)
+                            adjusted_data = (adjusted_data - overall_mean) * scale_factor + overall_mean
+                    
+                    X_transformed.loc[mask, self.non_sensitive_features_] = adjusted_data
+                    
+                except (np.linalg.LinAlgError, ValueError):
+                    self._apply_mean_matching_single_group(X_transformed, mask, group_value, sensitive_attr)
+        
+        return X_transformed
+    
+    def _apply_multivariate_repair(self, X: pd.DataFrame) -> pd.DataFrame:
+        """Apply multivariate bias repair that considers feature relationships."""
+        X_transformed = X.copy()
+        
+        for sensitive_attr in self.sensitive_features:
+            for group_value in X[sensitive_attr].unique():
+                if group_value not in self.group_stats_[sensitive_attr]:
+                    continue
+                
+                mask = X[sensitive_attr] == group_value
+                group_data = X_transformed.loc[mask, self.non_sensitive_features_].values
+                
+                if len(group_data) == 0:
+                    continue
+                
+                group_mean = np.array([self.group_stats_[sensitive_attr][group_value]['mean'][f] 
+                                     for f in self.non_sensitive_features_])
+                overall_mean = np.array([self.feature_means_[f] for f in self.non_sensitive_features_])
+                
+                try:
+                    
+                    centered_data = group_data - group_mean
+                    
+                    target_mean = group_mean + self.repair_level * (overall_mean - group_mean)
+                    
+                    if len(group_data) > 1:
+                        group_std = np.array([self.group_stats_[sensitive_attr][group_value]['std'][f] 
+                                            for f in self.non_sensitive_features_])
+                        noise_scale = (1 - self.repair_level) * 0.1
+                        noise = np.random.normal(0, group_std * noise_scale, centered_data.shape)
+                        repaired_data = centered_data + target_mean + noise
+                    else:
+                        repaired_data = centered_data + target_mean
+                    
+                    X_transformed.loc[mask, self.non_sensitive_features_] = repaired_data
+                    
+                except (ValueError, IndexError):
+                    self._apply_mean_matching_single_group(X_transformed, mask, group_value, sensitive_attr)
+        
+        return X_transformed
+    
+    def _apply_mean_matching_single_group(self, X_transformed: pd.DataFrame, mask: pd.Series, 
+                                        group_value: Any, sensitive_attr: str) -> None:
+        """Helper method to apply mean matching to a single group."""
+        group_means = self.group_stats_[sensitive_attr][group_value]['mean']
+        
+        for feature in self.non_sensitive_features_:
+            if feature in group_means and feature in self.feature_means_:
+                # Skip categorical features for bias mitigation
+                if feature in self.categorical_features_:
+                    continue
+                    
+                group_mean = group_means[feature]
+                overall_mean = self.feature_means_[feature]
+                adjustment = self.repair_level * (overall_mean - group_mean)
+                X_transformed.loc[mask, feature] += adjustment
     
     def get_mitigation_details(self) -> Dict[str, Any]:
         """Get information about the bias mitigation process."""
         self._check_is_fitted()
         
         info = {
+            'method': self.method,
             'repair_level': self.repair_level,
             'sensitive_features': self.sensitive_features,
             'non_sensitive_features': self.non_sensitive_features_,
             'group_statistics': self.group_stats_,
             'overall_means': self.feature_means_
         }
+        
+        if self.method in ['covariance_matching', 'multivariate_repair']:
+            info['covariance_matrices'] = {
+                attr: {group: cov.tolist() if isinstance(cov, np.ndarray) else cov
+                       for group, cov in group_covs.items()}
+                for attr, group_covs in self.covariance_matrices_.items()
+            }
+            if self.overall_cov_ is not None:
+                info['overall_covariance'] = self.overall_cov_.tolist()
         
         return info

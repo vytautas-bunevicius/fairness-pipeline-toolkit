@@ -3,7 +3,6 @@
 import argparse
 import sys
 from pathlib import Path
-from typing import Optional
 
 from .pipeline_executor import PipelineExecutor
 from .config import ConfigParser
@@ -37,13 +36,11 @@ def main() -> None:
     args = parser.parse_args()
     
     try:
-        # Load and validate configuration
         config_path = Path(args.config_path)
         print(f"Loading configuration from: {config_path}")
         
         config = ConfigParser.load(config_path)
         
-        # Validate configuration
         errors = ConfigParser.validate(config)
         if errors:
             print("Configuration validation failed:")
@@ -57,7 +54,6 @@ def main() -> None:
             print("Validation complete. Exiting.")
             return
         
-        # Run pipeline
         executor = PipelineExecutor(config, verbose=args.verbose)
         executor.execute_pipeline()
         

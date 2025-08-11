@@ -1,4 +1,11 @@
-"""Pipeline executor for fairness-aware ML workflows."""
+"""
+Central orchestrator for end-to-end fairness-aware machine learning workflows.
+
+This module coordinates the three-phase fairness pipeline: baseline measurement to identify
+bias, bias mitigation to reduce disparities, and fair training to ensure equitable outcomes.
+The executor manages the complex interactions between components while maintaining full
+observability through structured logging and MLflow integration.
+"""
 
 import pandas as pd
 import numpy as np
@@ -6,75 +13,123 @@ from pathlib import Path
 from typing import Dict, Any, Tuple
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
 import mlflow
 import mlflow.sklearn
+from mlflow.models.signature import infer_signature
 import tempfile
 
-from .config import ConfigParser
 from .measurement.bias_detector import BiasDetector
 from .pipeline.bias_mitigation_transformer import BiasMitigationTransformer
 from .training.fairness_constrained_classifier import FairnessConstrainedClassifier
+from .config import get_pipeline_logger, setup_logging
 
 
 class PipelineExecutor:
-    """Executes fairness-aware ML pipelines with bias detection, mitigation, and fair training."""
+    """
+    Orchestrates the complete fairness-aware machine learning workflow.
     
-    def __init__(self, config: Dict[str, Any], verbose: bool = False):
-        """Initialize pipeline executor."""
+    The executor implements a systematic approach to fairness: first measuring baseline
+    bias to establish the scope of the problem, then applying data-level corrections
+    to reduce group disparities, and finally training models with fairness constraints
+    to ensure equitable outcomes. This three-phase approach addresses bias at multiple
+    levels while maintaining model performance.
+    """
+    
+    def __init__(self, config: Dict[str, Any], verbose: bool = False, enable_logging: bool = True):
+        """
+        Initialize with configuration and observability settings.
+        
+        The executor requires comprehensive configuration to coordinate between bias
+        detection, mitigation, and fair training components. Logging is enabled by
+        default to provide full audit trails of the fairness pipeline execution.
+        """
         self.config = config
         self.verbose = verbose
         self.bias_detector = BiasDetector(threshold=config['evaluation']['fairness_threshold'])
         
-        # Initialize components
         self.transformer = None
         self.model = None
         self.baseline_report = None
         self.final_report = None
+        self.feature_scaler = StandardScaler()
+        
+        if enable_logging:
+            log_level = 'DEBUG' if verbose else 'INFO'
+            setup_logging(level=log_level, structured=True, console_output=verbose)
+        
+        self.logger = get_pipeline_logger('executor')
         
     def execute_pipeline(self) -> Dict[str, Any]:
-        """Execute the complete fairness pipeline."""
-        if self.verbose:
-            print("\nStarting fairness pipeline execution...")
+        """
+        Execute the three-phase fairness pipeline with full observability.
         
-        # Setup MLflow
-        self._setup_mlflow()
+        The pipeline follows a systematic approach: baseline measurement identifies the
+        extent of bias, data processing reduces disparities through transformation,
+        and fair training ensures equitable model behavior. Each phase builds on the
+        previous one while maintaining detailed logging for audit and debugging.
+        """
+        self.logger.log_stage_start("pipeline_execution", {
+            'experiment_name': self.config['mlflow']['experiment_name'],
+            'primary_metric': self.config['evaluation']['primary_metric']
+        })
         
-        # End any existing active run
-        if mlflow.active_run():
-            mlflow.end_run()
+        self.logger.start_timer("full_pipeline")
         
-        with mlflow.start_run(run_name=self.config['mlflow'].get('run_name')):
-            # Log configuration
-            if self.config['mlflow'].get('log_config', True):
-                self._log_config()
+        try:
+            self._setup_mlflow()
             
-            # Step 1: Load and audit baseline data
-            X_train, X_test, y_train, y_test = self._load_and_split_data()
-            self._measure_baseline_bias(X_train, y_train)
+            if mlflow.active_run():
+                mlflow.end_run()
             
-            # Step 2: Transform data and train model
-            X_train_transformed, X_test_transformed = self._mitigate_bias_and_train_model(
-                X_train, X_test, y_train
-            )
-            
-            # Step 3: Final validation
-            results = self._evaluate_final_fairness(
-                X_test_transformed, y_test, X_train_transformed, y_train
-            )
-            
-            # Log results to MLflow
-            self._log_results(results)
-            
-            if self.verbose:
-                print("\nPipeline execution completed successfully!")
-            
-            return results
+            with mlflow.start_run(run_name=self.config['mlflow'].get('run_name')):
+                if self.config['mlflow'].get('log_config', True):
+                    self._log_config()
+                
+                self.logger.start_timer("data_loading")
+                X_train, X_test, y_train, y_test = self._load_and_split_data()
+                self.logger.end_timer("data_loading")
+                
+                self.logger.start_timer("baseline_measurement")
+                self._measure_baseline_bias(X_train, y_train)
+                self.logger.end_timer("baseline_measurement")
+                
+                self.logger.start_timer("bias_mitigation_training")
+                X_train_transformed, X_test_transformed = self._mitigate_bias_and_train_model(
+                    X_train, X_test, y_train
+                )
+                self.logger.end_timer("bias_mitigation_training")
+                
+                self.logger.start_timer("final_evaluation")
+                results = self._evaluate_final_fairness(
+                    X_test_transformed, y_test, X_train_transformed, y_train
+                )
+                self.logger.end_timer("final_evaluation")
+                
+                self.logger.start_timer("mlflow_logging")
+                self._log_results(results)
+                self.logger.end_timer("mlflow_logging")
+                
+                pipeline_duration = self.logger.end_timer("full_pipeline")
+                
+                self.logger.log_stage_complete("pipeline_execution", {
+                    'total_duration_ms': pipeline_duration,
+                    'train_samples': len(X_train),
+                    'test_samples': len(X_test)
+                })
+                
+                return results
+                
+        except Exception as e:
+            self.logger.log_error("Pipeline execution failed", e, {
+                'config': self.config
+            })
+            raise
     
     def _setup_mlflow(self) -> None:
         """Setup MLflow experiment and run."""
         mlflow.set_experiment(self.config['mlflow']['experiment_name'])
         
-        # Set tags
         if 'tags' in self.config['mlflow']:
             for key, value in self.config['mlflow']['tags'].items():
                 mlflow.set_tag(key, value)
@@ -84,27 +139,28 @@ class PipelineExecutor:
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
             import yaml
             yaml.dump(self.config, f)
-            mlflow.log_artifact(f.name, "config")
+            mlflow.log_artifact(f.name, artifact_path="config")
     
     def _load_and_split_data(self) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
         """Load data and create train/test splits."""
-        if self.verbose:
-            print(f"Loading data from: {self.config['data']['input_path']}")
-        
-        # For demo purposes, create synthetic data if file doesn't exist
         data_path = Path(self.config['data']['input_path'])
+        
         if not data_path.exists():
-            if self.verbose:
-                print("Data file not found. Generating synthetic data for demo...")
+            self.logger.log_warning("Data file not found, generating synthetic data", {
+                'requested_path': str(data_path)
+            })
             data = self._generate_synthetic_data()
         else:
+            self.logger.log_stage_start("data_loading", {
+                'data_path': str(data_path)
+            })
             data = pd.read_csv(data_path)
         
-        # Separate features and target
+        self.logger.log_data_info(data.shape, self.config['data']['sensitive_features'])
+        
         X = data.drop(columns=[self.config['data']['target_column']])
         y = data[self.config['data']['target_column']]
         
-        # Train/test split
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, 
             test_size=self.config['data'].get('test_size', 0.2),
@@ -112,16 +168,25 @@ class PipelineExecutor:
             stratify=y
         )
         
-        if self.verbose:
-            print(f"Data loaded: {len(X_train)} training, {len(X_test)} test samples")
+        self.logger.log_stage_complete("data_split", {
+            'train_samples': len(X_train),
+            'test_samples': len(X_test),
+            'test_size': self.config['data'].get('test_size', 0.2)
+        })
         
         return X_train, X_test, y_train, y_test
     
     def _generate_synthetic_data(self, n_samples: int = 1000) -> pd.DataFrame:
-        """Generate synthetic data for demonstration."""
+        """
+        Create realistic synthetic data with intentional bias patterns.
+        
+        The generated dataset mimics real-world bias where demographic groups have
+        different feature distributions and outcomes. This creates measurable
+        disparities that allow the fairness pipeline to demonstrate its effectiveness
+        in detecting and mitigating bias.
+        """
         np.random.seed(self.config['data'].get('random_state', 42))
         
-        # Generate synthetic features
         data = pd.DataFrame({
             'age': np.random.normal(35, 10, n_samples).clip(18, 80),
             'income': np.random.lognormal(10, 0.5, n_samples),
@@ -130,7 +195,6 @@ class PipelineExecutor:
             'sex': np.random.choice(['Male', 'Female'], n_samples, p=[0.5, 0.5])
         })
         
-        # Generate biased target variable
         bias_factor = (data['race'] == 'White').astype(int) * 0.3 + (data['sex'] == 'Male').astype(int) * 0.2
         logit = -2 + 0.1 * data['age'] + 0.00002 * data['income'] + 0.1 * data['education_years'] + bias_factor
         prob = 1 / (1 + np.exp(-logit))
@@ -140,23 +204,23 @@ class PipelineExecutor:
     
     def _measure_baseline_bias(self, X: pd.DataFrame, y: pd.Series) -> None:
         """Measure baseline bias in raw data before any intervention."""
-        if self.verbose:
-            print("\nSTEP 1: Baseline Measurement")
+        self.logger.log_stage_start("baseline_measurement")
         
-        # Audit dataset
         dataset_report = self.bias_detector.audit_dataset(
             pd.concat([X, y], axis=1), 
             sensitive_column=self.config['data']['sensitive_features'][0],
             target_column=self.config['data']['target_column']
         )
         
-        # For predictions audit, we need a simple model prediction
-        simple_model = LogisticRegression(random_state=self.config['data'].get('random_state', 42))
-        X_numeric = self._prepare_features_for_modeling(X)
+        simple_model = LogisticRegression(
+            random_state=self.config['data'].get('random_state', 42),
+            max_iter=1000,
+            solver='lbfgs'
+        )
+        X_numeric = self._prepare_features_for_modeling(X, fit_scaler=True)
         simple_model.fit(X_numeric, y)
         y_pred_baseline = simple_model.predict(X_numeric)
         
-        # Audit baseline predictions
         sensitive_features = X[self.config['data']['sensitive_features'][0]]
         prediction_report = self.bias_detector.audit_predictions(
             y.values, y_pred_baseline, sensitive_features.values
@@ -167,17 +231,26 @@ class PipelineExecutor:
             'prediction_audit': prediction_report
         }
         
-        # Print baseline report
-        self.bias_detector.print_report(dataset_report, "BASELINE DATASET")
-        self.bias_detector.print_report(prediction_report, "BASELINE PREDICTION")
+        baseline_metrics = prediction_report['metrics']
+        self.logger.log_fairness_metrics(baseline_metrics, 'baseline')
+        
+        violations = prediction_report.get('fairness_violations', {})
+        violation_count = sum(1 for v in violations.values() if v)
+        
+        self.logger.log_stage_complete("baseline_measurement", {
+            'fairness_violations': violation_count,
+            'overall_fairness_score': prediction_report.get('overall_fairness_score', 0)
+        })
+        
+        if self.verbose:
+            self.bias_detector.print_report(dataset_report, "BASELINE DATASET")
+            self.bias_detector.print_report(prediction_report, "BASELINE PREDICTION")
     
     def _mitigate_bias_and_train_model(self, X_train: pd.DataFrame, X_test: pd.DataFrame, 
                                   y_train: pd.Series) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """Apply bias mitigation transformation and train fairness-constrained model."""
-        if self.verbose:
-            print("\nSTEP 2: Data Transformation and Model Training")
+        self.logger.log_stage_start("bias_mitigation")
         
-        # Initialize and fit transformer
         transformer_config = self.config['preprocessing']['transformer']
         if transformer_config['name'] == 'BiasMitigationTransformer':
             params = transformer_config.get('parameters', {})
@@ -186,26 +259,34 @@ class PipelineExecutor:
                 **params
             )
             
-            if self.verbose:
-                print(f"Applying {transformer_config['name']} transformation...")
+            self.logger.log_stage_start("transformer_fitting", {
+                'transformer_type': transformer_config['name'],
+                'repair_level': params.get('repair_level', 1.0),
+                'method': params.get('method', 'mean_matching')
+            })
             
             self.transformer.fit(X_train)
             X_train_transformed = self.transformer.transform(X_train)
             X_test_transformed = self.transformer.transform(X_test)
+            
+            self.logger.log_stage_complete("transformer_fitting")
         else:
-            # No transformation
+            self.logger.log_warning("No bias mitigation transformer specified")
             X_train_transformed = X_train.copy()
             X_test_transformed = X_test.copy()
         
-        # Initialize and train fair model
         training_config = self.config['training']['method']
         if training_config['name'] == 'FairnessConstrainedClassifier':
             params = training_config.get('parameters', {})
             
-            # Prepare base estimator
             base_estimator = None
             if params.get('base_estimator') == 'LogisticRegression':
-                base_estimator = LogisticRegression(random_state=self.config['data'].get('random_state', 42))
+                base_estimator = LogisticRegression(
+                    random_state=self.config['data'].get('random_state', 42),
+                    max_iter=1000,
+                    solver='lbfgs',
+                    C=1.0
+                )
             
             self.model = FairnessConstrainedClassifier(
                 base_estimator=base_estimator,
@@ -214,17 +295,25 @@ class PipelineExecutor:
                 random_state=self.config['data'].get('random_state', 42)
             )
             
-            if self.verbose:
-                print(f"Training {training_config['name']} model...")
+            self.logger.log_model_info(
+                training_config['name'],
+                params.get('constraint', 'demographic_parity'),
+                params
+            )
             
-            # Prepare features for modeling
-            X_model = self._prepare_features_for_modeling(X_train_transformed)
+            self.logger.log_stage_start("model_training")
+            
+            X_model = self._prepare_features_for_modeling(X_train_transformed, fit_scaler=False)
             sensitive_features = X_train_transformed[self.config['data']['sensitive_features']]
             
             self.model.fit(X_model, y_train, sensitive_features)
+            
+            self.logger.log_stage_complete("model_training", {
+                'model_fitted': True,
+                'uses_fairlearn': getattr(self.model, 'use_fairlearn', False)
+            })
         
-        if self.verbose:
-            print("Transformation and training completed")
+        self.logger.log_stage_complete("bias_mitigation")
         
         return X_train_transformed, X_test_transformed
     
@@ -232,15 +321,13 @@ class PipelineExecutor:
                                X_train: pd.DataFrame, y_train: pd.Series) -> Dict[str, Any]:
         """Evaluate final model fairness and compare with baseline metrics."""
         if self.verbose:
-            print("\nSTEP 3: Final Validation")
+            self.logger.log_stage_start('final_validation')
         
-        # Make predictions with trained model
-        X_test_numeric = self._prepare_features_for_modeling(X_test)
+        X_test_numeric = self._prepare_features_for_modeling(X_test, fit_scaler=False)
         sensitive_features_test = X_test[self.config['data']['sensitive_features']]
         
         y_pred_final = self.model.predict(X_test_numeric, sensitive_features_test)
         
-        # Audit final predictions
         sensitive_values = X_test[self.config['data']['sensitive_features'][0]].values
         final_prediction_report = self.bias_detector.audit_predictions(
             y_test.values, y_pred_final, sensitive_values
@@ -248,25 +335,33 @@ class PipelineExecutor:
         
         self.final_report = final_prediction_report
         
-        # Print final report
         self.bias_detector.print_report(final_prediction_report, "FINAL PREDICTION")
         
-        # Compare with baseline
         if self.baseline_report:
             baseline_metrics = self.baseline_report['prediction_audit']['metrics']
             final_metrics = final_prediction_report['metrics']
             
-            print("\nIMPROVEMENT COMPARISON:")
-            print(f"Accuracy: {baseline_metrics['accuracy']:.4f} → {final_metrics['accuracy']:.4f}")
-            print(f"Primary Fairness Metric ({self.config['evaluation']['primary_metric']}):")
-            print(f"  Baseline: {baseline_metrics[self.config['evaluation']['primary_metric']]:.4f}")
-            print(f"  Final: {final_metrics[self.config['evaluation']['primary_metric']]:.4f}")
+            self.logger.log_stage_start('improvement_comparison', {
+                'accuracy_baseline': baseline_metrics['accuracy'],
+                'accuracy_final': final_metrics['accuracy'],
+                'primary_metric': self.config['evaluation']['primary_metric'],
+                'primary_baseline': baseline_metrics[self.config['evaluation']['primary_metric']],
+                'primary_final': final_metrics[self.config['evaluation']['primary_metric']]
+            })
             
             improvement = baseline_metrics[self.config['evaluation']['primary_metric']] - final_metrics[self.config['evaluation']['primary_metric']]
             if improvement > 0:
-                print(f"  Improvement: {improvement:.4f}")
+                self.logger.logger.info(f"Primary metric improved by {improvement:.4f}", extra={
+                    'component': 'evaluation',
+                    'improvement': improvement,
+                    'improvement_type': 'positive'
+                })
             else:
-                print(f"  Change: {improvement:.4f}")
+                self.logger.logger.info(f"Primary metric changed by {improvement:.4f}", extra={
+                    'component': 'evaluation',
+                    'improvement': improvement,
+                    'improvement_type': 'negative' if improvement < 0 else 'neutral'
+                })
         
         return {
             'baseline_report': self.baseline_report,
@@ -275,44 +370,179 @@ class PipelineExecutor:
             'transformer': self.transformer
         }
     
-    def _prepare_features_for_modeling(self, X: pd.DataFrame) -> pd.DataFrame:
-        """Prepare features for model training (handle categorical variables)."""
+    def _prepare_features_for_modeling(self, X: pd.DataFrame, fit_scaler: bool = False) -> pd.DataFrame:
+        """Prepare features for model training (handle categorical variables and scaling)."""
         X_numeric = X.copy()
         
-        # Simple encoding for categorical variables
         for col in X_numeric.columns:
             if X_numeric[col].dtype == 'object':
-                # Label encoding for simplicity
                 unique_values = X_numeric[col].unique()
                 value_map = {val: idx for idx, val in enumerate(unique_values)}
                 X_numeric[col] = X_numeric[col].map(value_map)
         
+        if fit_scaler:
+            X_scaled = self.feature_scaler.fit_transform(X_numeric)
+        else:
+            X_scaled = self.feature_scaler.transform(X_numeric)
+        
+        X_numeric = pd.DataFrame(X_scaled, columns=X_numeric.columns, index=X_numeric.index)
+        
         return X_numeric
     
     def _log_results(self, results: Dict[str, Any]) -> None:
-        """Log results to MLflow."""
+        """Log results to MLflow with enhanced validation and signatures."""
         if self.verbose:
-            print("\nLogging results to MLflow...")
+            self.logger.log_stage_start('mlflow_logging')
         
-        # Log baseline metrics
-        if results['baseline_report']:
-            baseline_metrics = results['baseline_report']['prediction_audit']['metrics']
-            for metric, value in baseline_metrics.items():
-                mlflow.log_metric(f"baseline_{metric}", value)
-        
-        # Log final metrics
-        final_metrics = results['final_report']['metrics']
-        for metric, value in final_metrics.items():
-            mlflow.log_metric(f"final_{metric}", value)
-        
-        # Log primary fairness metric
-        primary_metric = self.config['evaluation']['primary_metric']
-        mlflow.log_metric("primary_fairness_metric", final_metrics[primary_metric])
-        
-        # Log model if configured
-        if self.config['mlflow'].get('log_model', True) and results['model']:
-            mlflow.sklearn.log_model(
-                results['model'], 
-                "fair_model",
-                registered_model_name=f"{self.config['mlflow']['experiment_name']}_model"
-            )
+        try:
+            if results['baseline_report']:
+                baseline_metrics = results['baseline_report']['prediction_audit']['metrics']
+                for metric, value in baseline_metrics.items():
+                    if isinstance(value, (int, float)) and not (np.isnan(value) or np.isinf(value)):
+                        mlflow.log_metric(f"baseline_{metric}", value)
+                    else:
+                        if self.verbose:
+                            self.logger.log_warning(f"Skipping invalid baseline metric {metric}: {value}")
+            
+            final_metrics = results['final_report']['metrics']
+            for metric, value in final_metrics.items():
+                if isinstance(value, (int, float)) and not (np.isnan(value) or np.isinf(value)):
+                    mlflow.log_metric(f"final_{metric}", value)
+                else:
+                    if self.verbose:
+                        self.logger.log_warning(f"Skipping invalid final metric {metric}: {value}")
+            
+            primary_metric = self.config['evaluation']['primary_metric']
+            if primary_metric in final_metrics:
+                primary_value = final_metrics[primary_metric]
+                if isinstance(primary_value, (int, float)) and not (np.isnan(primary_value) or np.isinf(primary_value)):
+                    mlflow.log_metric("primary_fairness_metric", primary_value)
+            
+            if results['baseline_report']:
+                baseline_primary = results['baseline_report']['prediction_audit']['metrics'].get(primary_metric)
+                final_primary = final_metrics.get(primary_metric)
+                if baseline_primary is not None and final_primary is not None:
+                    improvement = baseline_primary - final_primary
+                    improvement_pct = (improvement / baseline_primary) * 100 if baseline_primary != 0 else 0
+                    mlflow.log_metric("fairness_improvement", improvement)
+                    mlflow.log_metric("fairness_improvement_pct", improvement_pct)
+            
+            if self.config['mlflow'].get('log_model', True) and results['model']:
+                self._log_model_with_signature(results)
+                
+            if results['transformer']:
+                self._log_transformer_details(results['transformer'])
+                
+        except Exception as e:
+            if self.verbose:
+                self.logger.log_error("MLflow logging failed", e)
+            import traceback
+            traceback.print_exc()
+    
+    def _log_model_with_signature(self, results: Dict[str, Any]) -> None:
+        """Log model with proper signature and validation."""
+        try:
+            model = results['model']
+            
+            sample_data = self._generate_sample_data_for_signature()
+            
+            if sample_data is not None and len(sample_data) > 0:
+                sample_features = self._prepare_features_for_modeling(sample_data, fit_scaler=False)
+                sensitive_features = sample_data[self.config['data']['sensitive_features']]
+                
+                sample_predictions = model.predict(sample_features, sensitive_features)
+                
+                signature = infer_signature(sample_features, sample_predictions)
+                
+                mlflow.sklearn.log_model(
+                    model, 
+                    "fair_model",
+                    signature=signature,
+                    input_example=sample_features.head(3),
+                    registered_model_name=f"{self.config['mlflow']['experiment_name']}_model",
+                    metadata={
+                        "fairness_constraint": getattr(model, 'constraint_name', 'unknown'),
+                        "sensitive_features": self.config['data']['sensitive_features'],
+                        "uses_fairlearn": getattr(model, 'use_fairlearn', False),
+                        "repair_level": getattr(results.get('transformer'), 'repair_level', None)
+                    }
+                )
+                
+                if self.verbose:
+                    self.logger.logger.info("✅ Model logged with signature and metadata", extra={'component': 'mlflow', 'model_logging': 'success_with_signature'})
+                    
+            else:
+                mlflow.sklearn.log_model(
+                    model, 
+                    "fair_model",
+                    registered_model_name=f"{self.config['mlflow']['experiment_name']}_model"
+                )
+                if self.verbose:
+                    self.logger.log_warning("Model logged without signature (no sample data available)", {'model_logging': 'success_no_signature'})
+                    
+        except Exception as e:
+            if self.verbose:
+                self.logger.log_warning(f"Enhanced model logging failed, using basic logging: {e}")
+            try:
+                mlflow.sklearn.log_model(
+                    results['model'], 
+                    "fair_model",
+                    registered_model_name=f"{self.config['mlflow']['experiment_name']}_model"
+                )
+            except Exception as e2:
+                if self.verbose:
+                    self.logger.log_error("Basic model logging also failed", e2)
+    
+    def _generate_sample_data_for_signature(self) -> pd.DataFrame:
+        """Generate small sample dataset for signature inference."""
+        try:
+            sample_data = self._generate_synthetic_data(n_samples=10)
+            if self.config['data']['target_column'] in sample_data.columns:
+                sample_features = sample_data.drop(columns=[self.config['data']['target_column']])
+                return sample_features
+            return sample_data
+        except Exception:
+            return None
+    
+    def _log_transformer_details(self, transformer) -> None:
+        """Log transformer configuration and statistics."""
+        try:
+            if hasattr(transformer, 'get_mitigation_details'):
+                details = transformer.get_mitigation_details()
+                
+                mlflow.log_param("bias_mitigation_method", details.get('method', 'unknown'))
+                mlflow.log_param("repair_level", details.get('repair_level', 'unknown'))
+                mlflow.log_param("sensitive_features", str(details.get('sensitive_features', [])))
+                
+                group_stats = details.get('group_statistics', {})
+                for attr, groups in group_stats.items():
+                    group_sizes = [stats['size'] for stats in groups.values()]
+                    if group_sizes:
+                        mlflow.log_metric(f"group_size_min_{attr}", min(group_sizes))
+                        mlflow.log_metric(f"group_size_max_{attr}", max(group_sizes))
+                        mlflow.log_metric(f"group_size_mean_{attr}", np.mean(group_sizes))
+                
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                    import json
+                    json_safe_details = self._make_json_serializable(details)
+                    json.dump(json_safe_details, f, indent=2)
+                    mlflow.log_artifact(f.name, artifact_path="transformer_details")
+                    
+        except Exception as e:
+            if self.verbose:
+                self.logger.log_warning(f"Failed to log transformer details: {e}")
+    
+    def _make_json_serializable(self, obj) -> Any:
+        """Convert numpy arrays and other non-serializable objects to JSON-safe format."""
+        if isinstance(obj, dict):
+            return {key: self._make_json_serializable(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [self._make_json_serializable(item) for item in obj]
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, (np.integer, np.floating)):
+            return obj.item()
+        elif isinstance(obj, (int, float, str, bool)) or obj is None:
+            return obj
+        else:
+            return str(obj)

@@ -8,12 +8,9 @@ fairness-aware machine learning pipelines.
 import sys
 from pathlib import Path
 
-# Add src to Python path for local development
-src_path = Path(__file__).parent / "src"
-sys.path.insert(0, str(src_path))
-
 from fairness_pipeline_toolkit.pipeline_executor import PipelineExecutor
-from fairness_pipeline_toolkit.config import ConfigParser
+from fairness_pipeline_toolkit.config import ConfigParser, setup_logging
+import logging
 
 
 def main():
@@ -29,37 +26,28 @@ def main():
         sys.exit(1)
     
     try:
-        print("=" * 60)
-        print("FAIRNESS PIPELINE DEVELOPMENT TOOLKIT")
-        print("=" * 60)
-        
-        # Load configuration
-        print(f"Loading configuration from: {config_path}")
+        logger = setup_logging(level='INFO', console_output=True, structured=False)
+        logger.info(f"Loading configuration from: {config_path}")
         config = ConfigParser.load(config_path)
         
-        # Validate configuration
-        print("Validating configuration...")
+        logger.info("Validating configuration...")
         errors = ConfigParser.validate(config)
         if errors:
-            print("Configuration validation failed:")
+            logger.error("Configuration validation failed:")
             for error in errors:
-                print(f"  - {error}")
+                logger.error(f"  - {error}")
             sys.exit(1)
         
-        print("Configuration validated successfully")
+        logger.info("✓ Configuration validated")
         
-        # Initialize and run pipeline
         executor = PipelineExecutor(config, verbose=True)
         executor.execute_pipeline()
         
-        print("=" * 60)
-        print("PIPELINE EXECUTION COMPLETED SUCCESSFULLY!")
-        print("=" * 60)
+        logger.info("✓ Pipeline execution completed successfully")
         
     except Exception as e:
-        print(f"Pipeline execution failed: {e}")
-        import traceback
-        traceback.print_exc()
+        logger = logging.getLogger('fairness_pipeline')
+        logger.error(f"Pipeline execution failed: {e}", exc_info=True)
         sys.exit(1)
 
 
