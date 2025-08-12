@@ -155,18 +155,14 @@ class FairnessConstrainedClassifier(FairClassifier):
         if sensitive_features is None:
             sensitive_features = X[self.sensitive_features]
         
-        # Check if we need to recombine features (when provided separately)
         missing_cols = set(self.original_columns_) - set(X.columns)
         if missing_cols:
-            # Recombine X and sensitive_features for sklearn compatibility
             X_combined = X.copy()
             for col in missing_cols:
                 if col in sensitive_features.columns:
                     X_combined[col] = sensitive_features[col]
-            # Reorder columns to match original order
             X = X_combined[self.original_columns_]
         
-        # Encode features for prediction
         X_encoded = X.copy()
         for col in self.categorical_features_:
             if col in X_encoded.columns:

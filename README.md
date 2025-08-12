@@ -74,7 +74,7 @@ graph TB
     
     subgraph "Core Modules"
         MEASUREMENT[Measurement Module<br/>bias_detector.py<br/>fairness_metrics.py]
-        PIPELINE[Pipeline Module<br/>bias_mitigation_transformer.py<br/>base_transformer.py]
+        PIPELINE[Pipeline Module<br/>bias_mitigation_transformer.py]
         TRAINING[Training Module<br/>fairness_constrained_classifier.py<br/>fair_classifier.py]
     end
     
@@ -184,7 +184,6 @@ mlflow:
 
 ### Pipeline Module
 - **BiasMitigationTransformer**: Reduces bias by adjusting feature distributions
-- **BaseTransformer**: Foundation for custom data transformations
 
 ### Training Module
 - **FairnessConstrainedClassifier**: Enforces fairness constraints during model training

@@ -12,10 +12,10 @@ import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.covariance import EmpiricalCovariance
-from .base_transformer import BaseTransformer
+from sklearn.base import BaseEstimator, TransformerMixin
 
 
-class BiasMitigationTransformer(BaseTransformer):
+class BiasMitigationTransformer(BaseEstimator, TransformerMixin):
     """
     Reduces disparate impact by equalizing feature distributions across demographic groups.
     
@@ -34,7 +34,8 @@ class BiasMitigationTransformer(BaseTransformer):
         fairness at the potential cost of predictive performance. Different methods
         preserve different aspects of the original data structure.
         """
-        super().__init__(sensitive_features)
+        self.sensitive_features = sensitive_features or []
+        self.is_fitted_ = False
         self.repair_level = repair_level
         self.random_state = random_state
         self.method = method
@@ -47,6 +48,20 @@ class BiasMitigationTransformer(BaseTransformer):
         self.covariance_matrices_ = {}
         self.overall_cov_ = None
         np.random.seed(random_state)
+    
+    def _validate_input(self, X: pd.DataFrame) -> None:
+        """Validate input data format and required columns."""
+        if not isinstance(X, pd.DataFrame):
+            raise TypeError("Input must be a pandas DataFrame")
+        
+        missing_features = set(self.sensitive_features) - set(X.columns)
+        if missing_features:
+            raise ValueError(f"Missing sensitive features: {missing_features}")
+    
+    def _check_is_fitted(self) -> None:
+        """Check if transformer has been fitted."""
+        if not self.is_fitted_:
+            raise ValueError("Transformer must be fitted before transforming data")
         
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> 'BiasMitigationTransformer':
         """

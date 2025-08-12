@@ -20,9 +20,10 @@ class BiasDetector:
         self.logger = logging.getLogger('fairness_pipeline.bias_detector')
         self.console = Console(force_terminal=True, width=100)
     
-    def audit_dataset(self, data: pd.DataFrame, 
-                     sensitive_column: str, 
-                     target_column: Optional[str] = None) -> Dict[str, Any]:
+    @staticmethod
+    def audit_dataset(data: pd.DataFrame,
+                      sensitive_column: str,
+                      target_column: Optional[str] = None) -> Dict[str, Any]:
         """Audit dataset for potential bias in data distribution."""
         report = {
             'dataset_shape': data.shape,
@@ -91,35 +92,32 @@ class BiasDetector:
             
             self.console.print(dataset_table)
             
-            # Log for structured logging
             self.logger.info(f"Dataset Shape: {report['dataset_shape']}", extra={
                 'component': 'bias_detector',
                 'dataset_shape': report['dataset_shape'],
                 'sensitive_feature_distribution': report.get('sensitive_feature_distribution', {})
             })
         
-        # Metrics tables
         if 'metrics' in report:
-            # Performance metrics table
-            perf_metrics = {k: v for k, v in report['metrics'].items() if 'difference' not in k}
-            if perf_metrics:
-                perf_table = Table(title="Performance Metrics", box=box.SIMPLE, show_header=True, header_style="bold blue")
-                perf_table.add_column("Metric", style="cyan", no_wrap=True, min_width=15, max_width=20)
-                perf_table.add_column("Value", style="green", justify="right", min_width=8, max_width=15)
+            performance_metrics = {metric_name: metric_value for metric_name, metric_value in report['metrics'].items() if 'difference' not in metric_name}
+            if performance_metrics:
+                performance_table = Table(title="Performance Metrics", box=box.SIMPLE, show_header=True, header_style="bold blue")
+                performance_table.add_column("Metric", style="cyan", no_wrap=True, min_width=15, max_width=20)
+                performance_table.add_column("Value", style="green", justify="right", min_width=8, max_width=15)
                 
-                for metric, value in perf_metrics.items():
-                    perf_table.add_row(metric.title(), f"{value:.4f}")
-                    self.logger.info(f"{metric.title()}: {value:.4f}", extra={
+                for metric_name, metric_value in performance_metrics.items():
+                    performance_table.add_row(metric_name.title(), f"{metric_value:.4f}")
+                    self.logger.info(f"{metric_name.title()}: {metric_value:.4f}", extra={
                         'component': 'bias_detector',
                         'metric_type': 'performance',
-                        'metric_name': metric,
-                        'metric_value': value
+                        'metric_name': metric_name,
+                        'metric_value': metric_value
                     })
                 
-                self.console.print(perf_table)
+                self.console.print(performance_table)
             
             # Fairness metrics table
-            fairness_metrics = {k: v for k, v in report['metrics'].items() if 'difference' in k}
+            fairness_metrics = {metric_name: metric_value for metric_name, metric_value in report['metrics'].items() if 'difference' in metric_name}
             if fairness_metrics:
                 fairness_table = Table(title="Fairness Metrics", box=box.SIMPLE, show_header=True, header_style="bold blue")
                 fairness_table.add_column("Metric", style="cyan", no_wrap=False, min_width=20, max_width=30)

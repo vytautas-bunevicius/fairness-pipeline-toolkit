@@ -182,25 +182,62 @@ class PipelineExecutor:
     
     def _generate_synthetic_data(self, n_samples: int = 1000) -> pd.DataFrame:
         """
-        Create realistic synthetic data with intentional bias patterns.
+        Create realistic synthetic data with intentional bias patterns and real-world messiness.
         
-        The generated dataset mimics real-world bias where demographic groups have
-        different feature distributions and outcomes. This creates measurable
-        disparities that allow the fairness pipeline to demonstrate its effectiveness
-        in detecting and mitigating bias.
+        The generated dataset includes missing values, outliers, and correlated features
+        that mirror actual datasets while maintaining measurable bias patterns for
+        demonstrating the fairness pipeline's effectiveness.
         """
         np.random.seed(self.config['data'].get('random_state', 42))
         
         data = pd.DataFrame({
-            'age': np.random.normal(35, 10, n_samples).clip(18, 80),
-            'income': np.random.lognormal(10, 0.5, n_samples),
-            'education_years': np.random.normal(12, 3, n_samples).clip(8, 20),
+            'age': np.random.normal(35, 12, n_samples).clip(18, 80),
+            'income': np.random.lognormal(10, 0.8, n_samples),
+            'education_years': np.random.normal(12, 4, n_samples).clip(6, 20),
             'race': np.random.choice(['White', 'Black', 'Hispanic', 'Asian'], n_samples, p=[0.6, 0.2, 0.15, 0.05]),
-            'sex': np.random.choice(['Male', 'Female'], n_samples, p=[0.5, 0.5])
+            'sex': np.random.choice(['Male', 'Female'], n_samples, p=[0.52, 0.48])
         })
         
-        bias_factor = (data['race'] == 'White').astype(int) * 0.3 + (data['sex'] == 'Male').astype(int) * 0.2
-        logit = -2 + 0.1 * data['age'] + 0.00002 * data['income'] + 0.1 * data['education_years'] + bias_factor
+        # Add realistic correlations and group differences
+        race_income_bias = {
+            'White': 1.2, 'Asian': 1.15, 'Hispanic': 0.85, 'Black': 0.8
+        }
+        sex_income_bias = {'Male': 1.1, 'Female': 0.9}
+        
+        for i in range(len(data)):
+            race_multiplier = race_income_bias[data.loc[i, 'race']]
+            sex_multiplier = sex_income_bias[data.loc[i, 'sex']]
+            data.loc[i, 'income'] *= race_multiplier * sex_multiplier
+        
+        # Add missing values (5-10% per column)
+        for col in ['age', 'income', 'education_years']:
+            missing_mask = np.random.random(n_samples) < 0.07
+            data.loc[missing_mask, col] = np.nan
+        
+        # Add outliers (2% of data)
+        outlier_mask = np.random.random(n_samples) < 0.02
+        data.loc[outlier_mask, 'income'] *= np.random.uniform(3, 8, sum(outlier_mask))
+        
+        # Forward fill missing values for demonstration
+        data = data.fillna(method='ffill').fillna(method='bfill')
+        
+        # Generate biased target with intersectional effects
+        bias_factor = (
+            (data['race'] == 'White').astype(int) * 0.4 +
+            (data['race'] == 'Asian').astype(int) * 0.3 +
+            (data['sex'] == 'Male').astype(int) * 0.25 +
+            ((data['race'] == 'White') & (data['sex'] == 'Male')).astype(int) * 0.2
+        )
+        
+        logit = (
+            -3.2 + 
+            0.08 * (data['age'] - 35) + 
+            0.00003 * (data['income'] - data['income'].mean()) + 
+            0.12 * (data['education_years'] - 12) + 
+            bias_factor +
+            np.random.normal(0, 0.1, n_samples)  # Add noise
+        )
+        
         prob = 1 / (1 + np.exp(-logit))
         data['target'] = np.random.binomial(1, prob, n_samples)
         
@@ -239,7 +276,7 @@ class PipelineExecutor:
         self.logger.log_fairness_metrics(baseline_metrics, 'baseline')
         
         violations = prediction_report.get('fairness_violations', {})
-        violation_count = sum(1 for v in violations.values() if v)
+        violation_count = sum(1 for violation_detected in violations.values() if violation_detected)
         
         self.logger.log_stage_complete("baseline_measurement", {
             'fairness_violations': violation_count,
@@ -438,8 +475,8 @@ class PipelineExecutor:
         self.console.print(perf_table)
         
         # Fairness metrics comparison
-        fairness_metrics = [k for k in baseline_metrics.keys() if 'difference' in k]
-        if fairness_metrics:
+        fairness_metric_names = [metric_name for metric_name in baseline_metrics.keys() if 'difference' in metric_name]
+        if fairness_metric_names:
             fairness_table = Table(title="Fairness Metrics Comparison", box=box.SIMPLE, show_header=True, header_style="bold blue")
             fairness_table.add_column("Metric", style="cyan", no_wrap=False, min_width=20, max_width=30)
             fairness_table.add_column("Baseline", style="yellow", justify="right", min_width=8, max_width=12)
@@ -449,12 +486,12 @@ class PipelineExecutor:
             
             primary_metric = self.config['evaluation']['primary_metric']
             
-            for metric in fairness_metrics:
-                if metric in final_metrics:
-                    baseline_val = baseline_metrics[metric]
-                    final_val = final_metrics[metric]
-                    improvement = baseline_val - final_val  # For fairness metrics, lower is better
-                    improvement_pct = (improvement / baseline_val) * 100 if baseline_val != 0 else 0
+            for metric_name in fairness_metric_names:
+                if metric_name in final_metrics:
+                    baseline_value = baseline_metrics[metric_name]
+                    final_value = final_metrics[metric_name]
+                    improvement = baseline_value - final_value  # For fairness metrics, lower is better
+                    improvement_percentage = (improvement / baseline_value) * 100 if baseline_value != 0 else 0
                     
                     if improvement > 0:
                         status = "✅ Better"
@@ -467,15 +504,15 @@ class PipelineExecutor:
                         improvement_style = "dim"
                     
                     # Highlight primary metric
-                    metric_name = metric.replace('_', ' ').title()
-                    if metric == primary_metric:
-                        metric_name = f"🎯 {metric_name} (Primary)"
+                    display_metric_name = metric_name.replace('_', ' ').title()
+                    if metric_name == primary_metric:
+                        display_metric_name = f"🎯 {display_metric_name} (Primary)"
                     
                     fairness_table.add_row(
-                        metric_name,
-                        f"{baseline_val:.4f}",
-                        f"{final_val:.4f}",
-                        f"[{improvement_style}]{improvement:+.4f} ({improvement_pct:+.1f}%)[/{improvement_style}]",
+                        display_metric_name,
+                        f"{baseline_value:.4f}",
+                        f"{final_value:.4f}",
+                        f"[{improvement_style}]{improvement:+.4f} ({improvement_percentage:+.1f}%)[/{improvement_style}]",
                         status
                     )
             

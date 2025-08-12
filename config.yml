@@ -1,31 +1,18 @@
-# Fairness Pipeline Configuration
-# This file defines the complete fairness workflow to be executed
-
-# Dataset Configuration
 data:
-  # Path to input dataset (CSV format expected) - will generate synthetic data if not found
   input_path: "demo_data.csv"
-  # Name of the target column
   target_column: "target"
-  # List of sensitive feature columns
   sensitive_features: ["race", "sex"]
-  # Test split ratio
   test_size: 0.2
-  # Random state for reproducibility
   random_state: 42
 
-# Data Preprocessing Configuration
 preprocessing:
-  # Bias mitigation transformer to apply
   transformer:
     name: "BiasMitigationTransformer"
     parameters:
       repair_level: 0.8
       random_state: 42
 
-# Model Training Configuration  
 training:
-  # Fairness-constrained training method to use
   method:
     name: "FairnessConstrainedClassifier"
     parameters:
@@ -33,30 +20,15 @@ training:
       constraint: "demographic_parity"
       random_state: 42
 
-# Fairness Evaluation Configuration
 evaluation:
-  # Primary fairness metric to optimize and report
   primary_metric: "demographic_parity_difference"
-  # Threshold for fairness violations
   fairness_threshold: 0.1
-  # Additional metrics to compute
-  additional_metrics:
-    - "equalized_odds_difference"
-    - "accuracy"
-    - "precision"
-    - "recall"
 
-# MLflow Configuration
 mlflow:
-  # Experiment name for MLflow tracking
   experiment_name: "fairness_pipeline"
-  # Run name (if null, auto-generated)
   run_name: null
-  # Whether to log model artifacts
   log_model: true
-  # Whether to log config file
   log_config: true
-  # Additional tags for the run
   tags:
     framework: "fairness_pipeline_toolkit"
     version: "1.0.0"
