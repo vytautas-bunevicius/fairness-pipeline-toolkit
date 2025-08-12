@@ -21,6 +21,7 @@ dependencies = [
     "jupyter>=1.0.0",
     "notebook>=6.4.0",
     "pytest>=8.4.1",
+    "rich>=13.0.0",
 ]
 
 [project.optional-dependencies]

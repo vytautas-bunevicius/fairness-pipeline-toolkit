@@ -4,13 +4,13 @@ import yaml
 import re
 from pathlib import Path
 from typing import Dict, Any, Union, List, Optional
-from pydantic import BaseModel, Field, validator, ValidationError
+from pydantic import BaseModel, Field, field_validator, ValidationError
 
 
 class DataConfig(BaseModel):
     input_path: str = Field(..., description="Path to input data file")
     target_column: str = Field(..., description="Name of target column")
-    sensitive_features: List[str] = Field(..., min_items=1, max_items=10, description="List of sensitive feature columns")
+    sensitive_features: List[str] = Field(..., min_length=1, max_length=10, description="List of sensitive feature columns")
     test_size: float = Field(0.2, ge=0.01, le=0.99, description="Test set proportion")
     random_state: int = Field(42, description="Random seed")
 
@@ -19,7 +19,8 @@ class TransformerConfig(BaseModel):
     name: str = Field(..., description="Transformer class name")
     parameters: Dict[str, Any] = Field(default_factory=dict, description="Transformer parameters")
     
-    @validator('name')
+    @field_validator('name')
+    @classmethod
     def validate_transformer_name(cls, v):
         known_transformers = ['BiasMitigationTransformer']
         if v not in known_transformers:
@@ -35,7 +36,8 @@ class TrainingMethodConfig(BaseModel):
     name: str = Field(..., description="Training method name")
     parameters: Dict[str, Any] = Field(default_factory=dict, description="Training parameters")
     
-    @validator('name')
+    @field_validator('name')
+    @classmethod
     def validate_method_name(cls, v):
         known_methods = ['FairnessConstrainedClassifier']
         if v not in known_methods:
@@ -50,7 +52,7 @@ class TrainingConfig(BaseModel):
 class EvaluationConfig(BaseModel):
     primary_metric: str = Field(..., description="Primary fairness metric")
     fairness_threshold: float = Field(..., gt=0, le=1.0, description="Fairness threshold")
-    additional_metrics: List[str] = Field(default_factory=list, max_items=20, description="Additional metrics")
+    additional_metrics: List[str] = Field(default_factory=list, max_length=20, description="Additional metrics")
 
 
 class MLflowConfig(BaseModel):
@@ -60,7 +62,8 @@ class MLflowConfig(BaseModel):
     log_model: bool = Field(True, description="Whether to log model")
     tags: Dict[str, str] = Field(default_factory=dict, description="MLflow tags")
     
-    @validator('experiment_name')
+    @field_validator('experiment_name')
+    @classmethod
     def validate_experiment_name(cls, v):
         if re.search(r'[<>:"/\\|?*]', v):
             raise ValueError("experiment_name contains invalid characters")

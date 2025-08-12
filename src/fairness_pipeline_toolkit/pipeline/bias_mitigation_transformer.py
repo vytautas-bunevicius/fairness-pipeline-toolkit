@@ -196,7 +196,13 @@ class BiasMitigationTransformer(BaseTransformer):
                         overall_mean = self.feature_means_[feature]
                         
                         adjustment = self.repair_level * (overall_mean - group_mean)
-                        X_transformed.loc[mask, feature] += adjustment
+                        # Handle dtype compatibility
+                        original_dtype = X_transformed[feature].dtype
+                        new_values = X_transformed.loc[mask, feature] + adjustment
+                        if pd.api.types.is_integer_dtype(original_dtype):
+                            X_transformed.loc[mask, feature] = new_values.round().astype(original_dtype)
+                        else:
+                            X_transformed.loc[mask, feature] = new_values
         
         return X_transformed
     
@@ -242,7 +248,13 @@ class BiasMitigationTransformer(BaseTransformer):
                             scale_factor = np.clip(scale_factor, 0.5, 2.0)
                             adjusted_data = (adjusted_data - overall_mean) * scale_factor + overall_mean
                     
-                    X_transformed.loc[mask, self.non_sensitive_features_] = adjusted_data
+                    # Ensure compatible dtypes for pandas assignment
+                    for i, feature in enumerate(self.non_sensitive_features_):
+                        original_dtype = X_transformed[feature].dtype
+                        if pd.api.types.is_integer_dtype(original_dtype):
+                            X_transformed.loc[mask, feature] = adjusted_data[:, i].round().astype(original_dtype)
+                        else:
+                            X_transformed.loc[mask, feature] = adjusted_data[:, i]
                     
                 except (np.linalg.LinAlgError, ValueError):
                     self._apply_mean_matching_single_group(X_transformed, mask, group_value, sensitive_attr)
@@ -283,7 +295,13 @@ class BiasMitigationTransformer(BaseTransformer):
                     else:
                         repaired_data = centered_data + target_mean
                     
-                    X_transformed.loc[mask, self.non_sensitive_features_] = repaired_data
+                    # Ensure compatible dtypes for pandas assignment
+                    for i, feature in enumerate(self.non_sensitive_features_):
+                        original_dtype = X_transformed[feature].dtype
+                        if pd.api.types.is_integer_dtype(original_dtype):
+                            X_transformed.loc[mask, feature] = repaired_data[:, i].round().astype(original_dtype)
+                        else:
+                            X_transformed.loc[mask, feature] = repaired_data[:, i]
                     
                 except (ValueError, IndexError):
                     self._apply_mean_matching_single_group(X_transformed, mask, group_value, sensitive_attr)
@@ -304,7 +322,13 @@ class BiasMitigationTransformer(BaseTransformer):
                 group_mean = group_means[feature]
                 overall_mean = self.feature_means_[feature]
                 adjustment = self.repair_level * (overall_mean - group_mean)
-                X_transformed.loc[mask, feature] += adjustment
+                # Handle dtype compatibility
+                original_dtype = X_transformed[feature].dtype
+                new_values = X_transformed.loc[mask, feature] + adjustment
+                if pd.api.types.is_integer_dtype(original_dtype):
+                    X_transformed.loc[mask, feature] = new_values.round().astype(original_dtype)
+                else:
+                    X_transformed.loc[mask, feature] = new_values
     
     def get_mitigation_details(self) -> Dict[str, Any]:
         """Get information about the bias mitigation process."""

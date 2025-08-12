@@ -4,6 +4,9 @@ from typing import Dict, Any, Optional
 import pandas as pd
 import numpy as np
 import logging
+from rich.console import Console
+from rich.table import Table
+from rich import box
 from .fairness_metrics import FairnessMetrics
 
 
@@ -15,6 +18,7 @@ class BiasDetector:
         self.threshold = threshold
         self.metrics_calculator = FairnessMetrics()
         self.logger = logging.getLogger('fairness_pipeline.bias_detector')
+        self.console = Console(force_terminal=True, width=100)
     
     def audit_dataset(self, data: pd.DataFrame, 
                      sensitive_column: str, 
@@ -59,65 +63,123 @@ class BiasDetector:
         return report
     
     def print_report(self, report: Dict[str, Any], report_type: str = "audit"):
-        """Log formatted bias audit report using structured logging."""
+        """Print and log formatted bias audit report using Rich tables."""
+        # Print header with Rich
+        self.console.print(f"\n[bold blue]{report_type.upper()} REPORT[/bold blue]", style="bold blue")
+        
+        # Also log with structured logging
         self.logger.info(f"{report_type.title()} Report", extra={'component': 'bias_detector', 'report_type': report_type})
         
+        # Dataset information table
         if 'dataset_shape' in report:
+            dataset_table = Table(title="Dataset Information", box=box.SIMPLE, show_header=True, header_style="bold blue")
+            dataset_table.add_column("Attribute", style="cyan", no_wrap=True, min_width=15, max_width=25)
+            dataset_table.add_column("Value", style="magenta", min_width=15, max_width=30)
+            
+            dataset_table.add_row("Dataset Shape", str(report['dataset_shape']))
+            
+            if 'sensitive_feature_distribution' in report:
+                dist = report['sensitive_feature_distribution']
+                if isinstance(dist, dict):
+                    for group, count in dist.items():
+                        dataset_table.add_row(f"Group: {group}", str(count))
+                else:
+                    dataset_table.add_row("Sensitive Feature Distribution", str(dist))
+            
+            if 'target_rate_difference' in report:
+                dataset_table.add_row("Target Rate Difference", f"{report['target_rate_difference']:.4f}")
+            
+            self.console.print(dataset_table)
+            
+            # Log for structured logging
             self.logger.info(f"Dataset Shape: {report['dataset_shape']}", extra={
                 'component': 'bias_detector',
                 'dataset_shape': report['dataset_shape'],
                 'sensitive_feature_distribution': report.get('sensitive_feature_distribution', {})
             })
-            if 'target_rate_difference' in report:
-                self.logger.info(f"Target Rate Difference: {report['target_rate_difference']:.4f}", extra={
-                    'component': 'bias_detector',
-                    'target_rate_difference': report['target_rate_difference']
-                })
         
+        # Metrics tables
         if 'metrics' in report:
-            # Log performance metrics
+            # Performance metrics table
             perf_metrics = {k: v for k, v in report['metrics'].items() if 'difference' not in k}
             if perf_metrics:
+                perf_table = Table(title="Performance Metrics", box=box.SIMPLE, show_header=True, header_style="bold blue")
+                perf_table.add_column("Metric", style="cyan", no_wrap=True, min_width=15, max_width=20)
+                perf_table.add_column("Value", style="green", justify="right", min_width=8, max_width=15)
+                
                 for metric, value in perf_metrics.items():
+                    perf_table.add_row(metric.title(), f"{value:.4f}")
                     self.logger.info(f"{metric.title()}: {value:.4f}", extra={
                         'component': 'bias_detector',
                         'metric_type': 'performance',
                         'metric_name': metric,
                         'metric_value': value
                     })
+                
+                self.console.print(perf_table)
             
-            # Log fairness metrics
+            # Fairness metrics table
             fairness_metrics = {k: v for k, v in report['metrics'].items() if 'difference' in k}
             if fairness_metrics:
+                fairness_table = Table(title="Fairness Metrics", box=box.SIMPLE, show_header=True, header_style="bold blue")
+                fairness_table.add_column("Metric", style="cyan", no_wrap=False, min_width=20, max_width=30)
+                fairness_table.add_column("Value", style="magenta", justify="right", min_width=8, max_width=12)
+                fairness_table.add_column("Status", style="bold", justify="center", min_width=12, max_width=18)
+                fairness_table.add_column("Threshold", style="dim", justify="right", min_width=8, max_width=15)
+                
                 for metric, value in fairness_metrics.items():
-                    status = "OK" if abs(value) <= self.threshold else "VIOLATION"
+                    status = "✅ OK" if abs(value) <= self.threshold else "❌ VIOLATION"
+                    status_style = "green" if abs(value) <= self.threshold else "red"
+                    
+                    fairness_table.add_row(
+                        metric.replace('_', ' ').title(),
+                        f"{value:.4f}",
+                        f"[{status_style}]{status}[/{status_style}]",
+                        f"≤ {self.threshold}"
+                    )
+                    
                     self.logger.info(f"{metric.replace('_', ' ').title()}: {value:.4f} ({status})", extra={
                         'component': 'bias_detector',
                         'metric_type': 'fairness',
                         'metric_name': metric,
                         'metric_value': value,
-                        'fairness_status': status,
+                        'fairness_status': 'OK' if abs(value) <= self.threshold else 'VIOLATION',
                         'threshold': self.threshold
                     })
+                
+                self.console.print(fairness_table)
             
+            # Overall fairness score
             if 'overall_fairness_score' in report:
                 score = report['overall_fairness_score']
+                score_table = Table(title="Overall Assessment", box=box.SIMPLE, show_header=True, header_style="bold blue")
+                score_table.add_column("Metric", style="cyan", no_wrap=True, min_width=18, max_width=25)
+                score_table.add_column("Score", style="bold green", justify="right", min_width=10, max_width=20)
+                score_table.add_row("Overall Fairness Score", f"{score:.4f}")
+                
+                self.console.print(score_table)
+                
                 self.logger.info(f"Overall Fairness Score: {score:.4f}", extra={
                     'component': 'bias_detector',
                     'overall_fairness_score': score
                 })
             
+            # Violations summary
             if 'fairness_violations' in report:
-                if any(report['fairness_violations'].values()):
-                    violated_metrics = [violation for violation, detected in report['fairness_violations'].items() if detected]
-                    self.logger.warning(f"Fairness violations detected: {', '.join(violated_metrics)}", extra={
+                violations = [violation for violation, detected in report['fairness_violations'].items() if detected]
+                if violations:
+                    self.console.print(f"[red]⚠️  {len(violations)} fairness violations detected[/red]")
+                    self.logger.warning(f"Fairness violations detected: {', '.join(violations)}", extra={
                         'component': 'bias_detector',
-                        'violations': violated_metrics,
-                        'violation_count': len(violated_metrics)
+                        'violations': violations,
+                        'violation_count': len(violations)
                     })
                 else:
+                    self.console.print("[green]✅ No fairness violations detected[/green]")
                     self.logger.info("No significant fairness violations detected", extra={
                         'component': 'bias_detector',
                         'violations': [],
                         'violation_count': 0
                     })
+        
+        self.console.print("")  # Add spacing

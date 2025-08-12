@@ -161,8 +161,8 @@ class TestBiasDetector:
         
         captured = capsys.readouterr()
         assert "TEST DATASET REPORT" in captured.out
+        assert "Dataset Information" in captured.out
         assert "Dataset Shape" in captured.out
-        assert "Sensitive Feature Distribution" in captured.out
     
     def test_print_report_predictions(self, biased_predictions, capsys):
         """Test print report functionality for prediction audit."""

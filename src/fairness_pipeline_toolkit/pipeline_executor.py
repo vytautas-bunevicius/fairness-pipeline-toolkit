@@ -18,6 +18,9 @@ import mlflow
 import mlflow.sklearn
 from mlflow.models.signature import infer_signature
 import tempfile
+from rich.console import Console
+from rich.table import Table
+from rich import box
 
 from .measurement.bias_detector import BiasDetector
 from .pipeline.bias_mitigation_transformer import BiasMitigationTransformer
@@ -59,6 +62,7 @@ class PipelineExecutor:
             setup_logging(level=log_level, structured=True, console_output=verbose)
         
         self.logger = get_pipeline_logger('executor')
+        self.console = Console(force_terminal=True, width=120)
         
     def execute_pipeline(self) -> Dict[str, Any]:
         """
@@ -362,6 +366,10 @@ class PipelineExecutor:
                     'improvement': improvement,
                     'improvement_type': 'negative' if improvement < 0 else 'neutral'
                 })
+            
+            # Display improvement comparison table
+            if self.verbose:
+                self._display_improvement_comparison(baseline_metrics, final_metrics)
         
         return {
             'baseline_report': self.baseline_report,
@@ -388,6 +396,116 @@ class PipelineExecutor:
         X_numeric = pd.DataFrame(X_scaled, columns=X_numeric.columns, index=X_numeric.index)
         
         return X_numeric
+    
+    def _display_improvement_comparison(self, baseline_metrics: Dict[str, float], final_metrics: Dict[str, float]) -> None:
+        """Display improvement comparison using Rich tables."""
+        self.console.print("\n[bold blue]IMPROVEMENT COMPARISON[/bold blue]")
+        
+        # Performance metrics comparison
+        performance_metrics = ['accuracy', 'precision', 'recall', 'f1_score']
+        perf_table = Table(title="Performance Metrics Comparison", box=box.SIMPLE, show_header=True, header_style="bold blue")
+        perf_table.add_column("Metric", style="cyan", no_wrap=True, min_width=10, max_width=15)
+        perf_table.add_column("Baseline", style="yellow", justify="right", min_width=8, max_width=12)
+        perf_table.add_column("Final", style="green", justify="right", min_width=8, max_width=12) 
+        perf_table.add_column("Change", style="bold", justify="right", min_width=15, max_width=25)
+        perf_table.add_column("Status", style="bold", justify="center", min_width=10, max_width=15)
+        
+        for metric in performance_metrics:
+            if metric in baseline_metrics and metric in final_metrics:
+                baseline_val = baseline_metrics[metric]
+                final_val = final_metrics[metric]
+                change = final_val - baseline_val
+                change_pct = (change / baseline_val) * 100 if baseline_val != 0 else 0
+                
+                if change > 0:
+                    status = "📈 Improved"
+                    change_style = "green"
+                elif change < 0:
+                    status = "📉 Decreased"
+                    change_style = "red"
+                else:
+                    status = "➡️ Unchanged"
+                    change_style = "dim"
+                
+                perf_table.add_row(
+                    metric.title(),
+                    f"{baseline_val:.4f}",
+                    f"{final_val:.4f}",
+                    f"[{change_style}]{change:+.4f} ({change_pct:+.1f}%)[/{change_style}]",
+                    status
+                )
+        
+        self.console.print(perf_table)
+        
+        # Fairness metrics comparison
+        fairness_metrics = [k for k in baseline_metrics.keys() if 'difference' in k]
+        if fairness_metrics:
+            fairness_table = Table(title="Fairness Metrics Comparison", box=box.SIMPLE, show_header=True, header_style="bold blue")
+            fairness_table.add_column("Metric", style="cyan", no_wrap=False, min_width=20, max_width=30)
+            fairness_table.add_column("Baseline", style="yellow", justify="right", min_width=8, max_width=12)
+            fairness_table.add_column("Final", style="green", justify="right", min_width=8, max_width=12)
+            fairness_table.add_column("Improvement", style="bold", justify="right", min_width=15, max_width=25)
+            fairness_table.add_column("Status", style="bold", justify="center", min_width=10, max_width=15)
+            
+            primary_metric = self.config['evaluation']['primary_metric']
+            
+            for metric in fairness_metrics:
+                if metric in final_metrics:
+                    baseline_val = baseline_metrics[metric]
+                    final_val = final_metrics[metric]
+                    improvement = baseline_val - final_val  # For fairness metrics, lower is better
+                    improvement_pct = (improvement / baseline_val) * 100 if baseline_val != 0 else 0
+                    
+                    if improvement > 0:
+                        status = "✅ Better"
+                        improvement_style = "green"
+                    elif improvement < 0:
+                        status = "❌ Worse"
+                        improvement_style = "red"
+                    else:
+                        status = "➡️ Same"
+                        improvement_style = "dim"
+                    
+                    # Highlight primary metric
+                    metric_name = metric.replace('_', ' ').title()
+                    if metric == primary_metric:
+                        metric_name = f"🎯 {metric_name} (Primary)"
+                    
+                    fairness_table.add_row(
+                        metric_name,
+                        f"{baseline_val:.4f}",
+                        f"{final_val:.4f}",
+                        f"[{improvement_style}]{improvement:+.4f} ({improvement_pct:+.1f}%)[/{improvement_style}]",
+                        status
+                    )
+            
+            self.console.print(fairness_table)
+        
+        # Overall summary
+        primary_metric = self.config['evaluation']['primary_metric']
+        if primary_metric in baseline_metrics and primary_metric in final_metrics:
+            baseline_primary = baseline_metrics[primary_metric]
+            final_primary = final_metrics[primary_metric]
+            improvement = baseline_primary - final_primary
+            
+            summary_table = Table(title="Summary", box=box.SIMPLE, show_header=True, header_style="bold blue")
+            summary_table.add_column("Assessment", style="cyan", no_wrap=False, min_width=20, max_width=30)
+            summary_table.add_column("Result", style="bold", justify="left", min_width=30, max_width=50)
+            
+            if improvement > 0:
+                summary_table.add_row("Primary Fairness Goal", f"[green]✅ Achieved ({improvement:.4f} improvement)[/green]")
+            else:
+                summary_table.add_row("Primary Fairness Goal", f"[red]❌ Not achieved ({improvement:.4f} change)[/red]")
+            
+            # Check if model still meets fairness threshold
+            threshold = self.config['evaluation']['fairness_threshold']
+            if final_primary <= threshold:
+                summary_table.add_row("Fairness Threshold", f"[green]✅ Meets threshold (≤{threshold})[/green]")
+            else:
+                summary_table.add_row("Fairness Threshold", f"[red]❌ Exceeds threshold (>{threshold})[/red]")
+                
+            self.console.print(summary_table)
+            self.console.print("")
     
     def _log_results(self, results: Dict[str, Any]) -> None:
         """Log results to MLflow with enhanced validation and signatures."""
