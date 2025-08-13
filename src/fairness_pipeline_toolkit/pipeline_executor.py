@@ -23,7 +23,6 @@ import tempfile
 import warnings
 from datetime import datetime
 
-# Suppress MLflow warnings about pip version resolution
 os.environ.setdefault("MLFLOW_SUPPRESS_ENVIRONMENT_WARNINGS", "1")
 warnings.filterwarnings("ignore", message=".*pip.*", module="mlflow.*")
 warnings.filterwarnings("ignore", message=".*artifact_path.*", module="mlflow.*")
@@ -63,7 +62,7 @@ class PipelineExecutor:
         self.bias_detector = BiasDetector(
             threshold=config["evaluation"]["fairness_threshold"]
         )
-        self.experiment_name = None  # Will be set during MLflow setup
+        self.experiment_name = None
 
         self.transformer = None
         self.model = None
@@ -143,6 +142,11 @@ class PipelineExecutor:
                     },
                 )
 
+                results["experiment_name"] = self.experiment_name
+                active_run = mlflow.active_run()
+                if active_run:
+                    results["run_id"] = active_run.info.run_id
+
                 return results
 
         except Exception as e:
@@ -153,12 +157,10 @@ class PipelineExecutor:
 
     def _setup_mlflow(self) -> None:
         """Setup MLflow experiment and run."""
-        # Set tracking URI to project root instead of current directory
         project_root = Path(__file__).parent.parent.parent
         mlruns_path = project_root / "mlruns"
         mlflow.set_tracking_uri(f"file://{mlruns_path.absolute()}")
 
-        # Create versioned experiment name with timestamp
         base_name = self.config["mlflow"]["experiment_name"]
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         experiment_name = f"{base_name}_{timestamp}"
@@ -168,7 +170,6 @@ class PipelineExecutor:
             self.experiment_name = experiment_name
         except MlflowException as e:
             if "deleted experiment" in str(e).lower():
-                # If the experiment was deleted, create a new one with incremented version
                 import random
 
                 experiment_name = (
@@ -255,7 +256,6 @@ class PipelineExecutor:
             }
         )
 
-        # Add realistic correlations and group differences
         race_income_bias = {"White": 1.2, "Asian": 1.15, "Hispanic": 0.85, "Black": 0.8}
         sex_income_bias = {"Male": 1.1, "Female": 0.9}
 
@@ -264,19 +264,15 @@ class PipelineExecutor:
             sex_multiplier = sex_income_bias[data.loc[i, "sex"]]
             data.loc[i, "income"] *= race_multiplier * sex_multiplier
 
-        # Add missing values (5-10% per column)
         for col in ["age", "income", "education_years"]:
             missing_mask = np.random.random(n_samples) < 0.07
             data.loc[missing_mask, col] = np.nan
 
-        # Add outliers (2% of data)
         outlier_mask = np.random.random(n_samples) < 0.02
         data.loc[outlier_mask, "income"] *= np.random.uniform(3, 8, sum(outlier_mask))
 
-        # Forward fill missing values for demonstration
         data = data.ffill().bfill()
 
-        # Generate biased target with intersectional effects
         bias_factor = (
             (data["race"] == "White").astype(int) * 0.4
             + (data["race"] == "Asian").astype(int) * 0.3
@@ -290,7 +286,7 @@ class PipelineExecutor:
             + 0.00003 * (data["income"] - data["income"].mean())
             + 0.12 * (data["education_years"] - 12)
             + bias_factor
-            + np.random.normal(0, 0.1, n_samples)  # Add noise
+            + np.random.normal(0, 0.1, n_samples)
         )
 
         prob = 1 / (1 + np.exp(-logit))
@@ -313,7 +309,10 @@ class PipelineExecutor:
             max_iter=1000,
             solver="lbfgs",
         )
-        X_numeric = self._prepare_features_for_modeling(X, fit_scaler=True)
+
+        baseline_scaler = StandardScaler()
+        X_baseline = X.drop(columns=self.config["data"]["sensitive_features"])
+        X_numeric = self._prepare_features_for_baseline(X_baseline, baseline_scaler)
         simple_model.fit(X_numeric, y)
         y_pred_baseline = simple_model.predict(X_numeric)
 
@@ -410,7 +409,10 @@ class PipelineExecutor:
             self.logger.log_stage_start("model_training")
 
             X_model = self._prepare_features_for_modeling(
-                X_train_transformed, fit_scaler=False
+                X_train_transformed.drop(
+                    columns=self.config["data"]["sensitive_features"]
+                ),
+                fit_scaler=True,
             )
             sensitive_features = X_train_transformed[
                 self.config["data"]["sensitive_features"]
@@ -441,7 +443,10 @@ class PipelineExecutor:
         if self.verbose:
             self.logger.log_stage_start("final_validation")
 
-        X_test_numeric = self._prepare_features_for_modeling(X_test, fit_scaler=False)
+        X_test_numeric = self._prepare_features_for_modeling(
+            X_test.drop(columns=self.config["data"]["sensitive_features"]),
+            fit_scaler=False,
+        )
         sensitive_features_test = X_test[self.config["data"]["sensitive_features"]]
 
         y_pred_final = self.model.predict(X_test_numeric, sensitive_features_test)
@@ -499,7 +504,6 @@ class PipelineExecutor:
                     },
                 )
 
-            # Display improvement comparison table
             if self.verbose:
                 self._display_improvement_comparison(baseline_metrics, final_metrics)
 
@@ -514,24 +518,45 @@ class PipelineExecutor:
         self, X: pd.DataFrame, fit_scaler: bool = False
     ) -> pd.DataFrame:
         """Prepare features for model training (handle categorical variables and scaling)."""
-        X_numeric = X.copy()
+        X_processed = X.copy()
 
-        for col in X_numeric.columns:
-            if X_numeric[col].dtype == "object":
-                unique_values = X_numeric[col].unique()
-                value_map = {val: idx for idx, val in enumerate(unique_values)}
-                X_numeric[col] = X_numeric[col].map(value_map)
+        X_num = X_processed.select_dtypes(include=["number"]).copy()
+        X_cat = X_processed.select_dtypes(exclude=["number"]).copy()
 
-        if fit_scaler:
-            X_scaled = self.feature_scaler.fit_transform(X_numeric)
+        if len(X_num.columns) > 0:
+            if fit_scaler:
+                X_scaled = self.feature_scaler.fit_transform(X_num)
+            else:
+                X_scaled = self.feature_scaler.transform(X_num)
+            X_num = pd.DataFrame(X_scaled, columns=X_num.columns, index=X_num.index)
+
+        if len(X_cat.columns) > 0:
+            result = pd.concat([X_num, X_cat], axis=1)
         else:
-            X_scaled = self.feature_scaler.transform(X_numeric)
+            result = X_num
 
-        X_numeric = pd.DataFrame(
-            X_scaled, columns=X_numeric.columns, index=X_numeric.index
-        )
+        return result[X.columns]
 
-        return X_numeric
+    def _prepare_features_for_baseline(self, X: pd.DataFrame, scaler) -> pd.DataFrame:
+        """Prepare features for baseline model using a separate scaler to avoid data leakage."""
+        X_processed = X.copy()
+
+        X_num = X_processed.select_dtypes(include=["number"]).copy()
+        X_cat = X_processed.select_dtypes(exclude=["number"]).copy()
+
+        if not X_num.empty:
+            X_scaled = scaler.fit_transform(X_num)
+            X_num = pd.DataFrame(X_scaled, columns=X_num.columns, index=X_num.index)
+
+        if not X_cat.empty:
+            X_cat = X_cat.apply(lambda s: s.astype("category").cat.codes)
+
+        if not X_cat.empty:
+            result = pd.concat([X_num, X_cat], axis=1)
+        else:
+            result = X_num
+
+        return result[X.columns]
 
     def _display_improvement_comparison(
         self, baseline_metrics: Dict[str, float], final_metrics: Dict[str, float]
@@ -539,7 +564,6 @@ class PipelineExecutor:
         """Display improvement comparison using Rich tables."""
         self.console.print("\n[bold blue]IMPROVEMENT COMPARISON[/bold blue]")
 
-        # Performance metrics comparison
         performance_metrics = ["accuracy", "precision", "recall", "f1_score"]
         perf_table = Table(
             title="Performance Metrics Comparison",
@@ -590,7 +614,6 @@ class PipelineExecutor:
 
         self.console.print(perf_table)
 
-        # Fairness metrics comparison
         fairness_metric_names = [
             metric_name
             for metric_name in baseline_metrics.keys()
@@ -625,9 +648,7 @@ class PipelineExecutor:
                 if metric_name in final_metrics:
                     baseline_value = baseline_metrics[metric_name]
                     final_value = final_metrics[metric_name]
-                    improvement = (
-                        baseline_value - final_value
-                    )  # For fairness metrics, lower is better
+                    improvement = baseline_value - final_value
                     improvement_percentage = (
                         (improvement / baseline_value) * 100
                         if baseline_value != 0
@@ -644,7 +665,6 @@ class PipelineExecutor:
                         status = "➡️ Same"
                         improvement_style = "dim"
 
-                    # Highlight primary metric
                     display_metric_name = metric_name.replace("_", " ").title()
                     if metric_name == primary_metric:
                         display_metric_name = f"🎯 {display_metric_name} (Primary)"
@@ -659,7 +679,6 @@ class PipelineExecutor:
 
             self.console.print(fairness_table)
 
-        # Overall summary
         primary_metric = self.config["evaluation"]["primary_metric"]
         if primary_metric in baseline_metrics and primary_metric in final_metrics:
             baseline_primary = baseline_metrics[primary_metric]
@@ -690,7 +709,6 @@ class PipelineExecutor:
                     f"[red]❌ Not achieved ({improvement:.4f} change)[/red]",
                 )
 
-            # Check if model still meets fairness threshold
             threshold = self.config["evaluation"]["fairness_threshold"]
             if final_primary <= threshold:
                 summary_table.add_row(
@@ -784,7 +802,8 @@ class PipelineExecutor:
 
             if sample_data is not None and len(sample_data) > 0:
                 sample_features = self._prepare_features_for_modeling(
-                    sample_data, fit_scaler=False
+                    sample_data.drop(columns=self.config["data"]["sensitive_features"]),
+                    fit_scaler=False,
                 )
                 sensitive_features = sample_data[
                     self.config["data"]["sensitive_features"]
@@ -794,7 +813,6 @@ class PipelineExecutor:
 
                 signature = infer_signature(sample_features, sample_predictions)
 
-                # Log model with automatic versioning (suppresses "already exists" warnings)
                 model_name = (
                     f"{self.experiment_name}_model"
                     if self.experiment_name
@@ -841,7 +859,9 @@ class PipelineExecutor:
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", message=".*already exists.*")
                     mlflow.sklearn.log_model(
-                        model, artifact_path="fair_model", registered_model_name=model_name
+                        model,
+                        artifact_path="fair_model",
+                        registered_model_name=model_name,
                     )
                 if self.verbose:
                     self.logger.log_warning(
@@ -863,7 +883,9 @@ class PipelineExecutor:
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", message=".*already exists.*")
                     mlflow.sklearn.log_model(
-                        results["model"], artifact_path="fair_model", registered_model_name=model_name
+                        results["model"],
+                        artifact_path="fair_model",
+                        registered_model_name=model_name,
                     )
             except Exception as e2:
                 if self.verbose:

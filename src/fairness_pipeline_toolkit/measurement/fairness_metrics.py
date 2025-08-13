@@ -3,7 +3,7 @@
 from typing import Dict
 import numpy as np
 import pandas as pd
-from sklearn.metrics import accuracy_score, precision_score, recall_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
 
 class FairnessMetrics:
@@ -50,6 +50,9 @@ class FairnessMetrics:
             ),
             "recall": float(
                 recall_score(y_true, y_pred, average="weighted", zero_division=0)
+            ),
+            "f1_score": float(
+                f1_score(y_true, y_pred, average="weighted", zero_division=0)
             ),
             "demographic_parity_difference": FairnessMetrics.demographic_parity_difference(
                 y_true, y_pred, sensitive_features
