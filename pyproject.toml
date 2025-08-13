@@ -19,6 +19,7 @@ dependencies = [
     "matplotlib>=3.5.0",
     "seaborn>=0.11.0",
     "plotly>=5.0.0",
+    "kaleido>=0.2.1", # Static image export
     "tomli>=1.2.0;python_version<'3.11'",
     "jupyter>=1.0.0",
     "notebook>=6.4.0",
@@ -74,4 +75,11 @@ layout.margins.r = 150
 layout.margins.t = 100
 layout.margins.b = 80
 layout.margins.pad = 10
+
+# Static image export settings
+export.default_format = "png"
+export.width = 1200
+export.height = 800
+export.scale = 2
+export.output_dir = "images"
 
