@@ -51,82 +51,28 @@ python -m pytest tests/
 uv run python -m pytest tests/
 ```
 
-## Architecture
+## How It Works
 
 ```mermaid
-flowchart TD
-    %% Input Layer
-    DATA["Input Data<br/>• CSV files<br/>• Target & sensitive features<br/>• Train/test split"]
-    CONFIG["config.yml<br/>• Pipeline configuration<br/>• Model parameters<br/>• Fairness thresholds"]
+flowchart LR
+    INPUT["📊 Your Data<br/>+ config.yml"] 
+    STEP1["🔍 Step 1<br/>Find Bias"]
+    STEP2["🔧 Step 2<br/>Fix Bias"] 
+    STEP3["✅ Step 3<br/>Fair Model"]
+    OUTPUT["📈 Results<br/>Better Fairness"]
     
-    %% Orchestration Layer
-    EXECUTOR["Pipeline Executor<br/>run_pipeline.py<br/>• Configuration parsing<br/>• Component coordination<br/>• Error handling"]
+    INPUT --> STEP1 --> STEP2 --> STEP3 --> OUTPUT
     
-    %% Three-Step Process
-    subgraph PIPELINE ["Three-Step Fairness Pipeline"]
-        STEP1["Step 1: Baseline<br/>• Bias detection<br/>• Initial metrics<br/>• Baseline model"]
-        STEP2["Step 2: Mitigation<br/>• Data preprocessing<br/>• Bias reduction<br/>• Feature scaling"]
-        STEP3["Step 3: Fair Training<br/>• Constrained learning<br/>• Model optimization<br/>• Final evaluation"]
-        
-        STEP1 --> STEP2
-        STEP2 --> STEP3
-    end
+    classDef default fill:#f9f9f9,stroke:#333,stroke-width:2px,color:#000
+    classDef highlight fill:#e8f4fd,stroke:#1976d2,stroke-width:3px,color:#000
     
-    %% Core Modules
-    subgraph MODULES ["Core Modules"]
-        MEASUREMENT["Measurement<br/>• BiasDetector<br/>• FairnessMetrics<br/>• Statistical tests"]
-        TRANSFORM["Pipeline<br/>• BiasMitigation<br/>• Data transforms<br/>• Preprocessing"]
-        TRAINING["Training<br/>• Fair classifiers<br/>• Constraint methods<br/>• Model validation"]
-    end
-    
-    %% Integration Layer
-    subgraph INTEGRATION ["Integration Layer"]
-        MLFLOW["MLflow<br/>• Experiment tracking<br/>• Model registry<br/>• Artifact storage"]
-        LOGGING["Logging<br/>• Structured logs<br/>• Performance monitoring<br/>• Audit trails"]
-    end
-    
-    %% Outputs
-    RESULTS["Results<br/>• Fair models<br/>• Metrics reports<br/>• Improvement analysis"]
-    
-    %% Flow connections
-    DATA --> EXECUTOR
-    CONFIG --> EXECUTOR
-    
-    EXECUTOR --> STEP1
-    EXECUTOR --> STEP2
-    EXECUTOR --> STEP3
-    
-    STEP1 -.-> MEASUREMENT
-    STEP2 -.-> TRANSFORM
-    STEP3 -.-> TRAINING
-    
-    STEP1 --> MLFLOW
-    STEP2 --> MLFLOW
-    STEP3 --> MLFLOW
-    
-    EXECUTOR --> LOGGING
-    STEP1 --> LOGGING
-    STEP2 --> LOGGING
-    STEP3 --> LOGGING
-    
-    STEP3 --> RESULTS
-    MLFLOW --> RESULTS
-    
-    %% Styling
-    classDef inputStyle fill:#E3F2FD,stroke:#1976D2,stroke-width:2px
-    classDef executorStyle fill:#E8F5E8,stroke:#388E3C,stroke-width:3px
-    classDef stepStyle fill:#FFF3E0,stroke:#F57C00,stroke-width:2px
-    classDef moduleStyle fill:#FCE4EC,stroke:#C2185B,stroke-width:2px
-    classDef integrationStyle fill:#F3E5F5,stroke:#7B1FA2,stroke-width:2px
-    classDef outputStyle fill:#E0F2F1,stroke:#00796B,stroke-width:2px
-    
-    class DATA,CONFIG inputStyle
-    class EXECUTOR executorStyle
-    class STEP1,STEP2,STEP3 stepStyle
-    class MEASUREMENT,TRANSFORM,TRAINING moduleStyle
-    class MLFLOW,LOGGING integrationStyle
-    class RESULTS outputStyle
+    class INPUT,OUTPUT highlight
 ```
+
+**Simple 3-step process:**
+1. **Find Bias**: Measure how unfair your current model is
+2. **Fix Bias**: Clean the data and apply fairness constraints  
+3. **Fair Model**: Get a model that treats all groups more equally
 
 ## What It Does
 
@@ -197,7 +143,7 @@ Automatically tracks and logs:
 
 ## Requirements
 
-- Python 3.13+
+- Python 3.13+ (or check .python-version)
 - Core dependencies: scikit-learn, pandas, numpy, fairlearn, mlflow
 - Optional: jupyter (for demo notebook)
 
@@ -245,20 +191,8 @@ Primary Fairness Metric (demographic_parity_difference):
 ✓ Pipeline execution completed successfully
 ```
 
-## Architecture Design
-
-This toolkit follows modern Python 2025 best practices:
-
-- **pyproject.toml**: Handles project metadata, dependencies, and build configuration
-- **config.yml**: Manages runtime application settings for pipeline behavior
-- **Modular design**: Separate modules for measurement, pipeline processing, and training
-- **MLflow integration**: Automatic experiment tracking and model versioning
-- **Type safety**: Full type hints and mypy compatibility
-
-The separation between project configuration (pyproject.toml) and application configuration (config.yml) ensures clear boundaries between development tooling and runtime behavior, following current Python ecosystem standards.
-
 ## License
 
-**Unlicense** - This software is released into the public domain. You are free to use, modify, and distribute this code without any restrictions. See the LICENSE file for full details.
+This software is released into the public domain. You are free to use, modify, and distribute this code without any restrictions. See the LICENSE file for full details.
 
 The Unlicense promotes maximum freedom and removes all copyright restrictions, making this toolkit freely available for any use case, including commercial applications.

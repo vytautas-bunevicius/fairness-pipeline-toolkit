@@ -26,6 +26,7 @@ from datetime import datetime
 # Suppress MLflow warnings about pip version resolution
 os.environ.setdefault("MLFLOW_SUPPRESS_ENVIRONMENT_WARNINGS", "1")
 warnings.filterwarnings("ignore", message=".*pip.*", module="mlflow.*")
+warnings.filterwarnings("ignore", message=".*artifact_path.*", module="mlflow.*")
 from rich.console import Console
 from rich.table import Table
 from rich import box
@@ -273,7 +274,7 @@ class PipelineExecutor:
         data.loc[outlier_mask, "income"] *= np.random.uniform(3, 8, sum(outlier_mask))
 
         # Forward fill missing values for demonstration
-        data = data.fillna(method="ffill").fillna(method="bfill")
+        data = data.ffill().bfill()
 
         # Generate biased target with intersectional effects
         bias_factor = (
@@ -804,7 +805,7 @@ class PipelineExecutor:
                     warnings.filterwarnings("ignore", message=".*already exists.*")
                     mlflow.sklearn.log_model(
                         model,
-                        "fair_model",
+                        artifact_path="fair_model",
                         signature=signature,
                         input_example=sample_features.head(3),
                         registered_model_name=model_name,
@@ -840,7 +841,7 @@ class PipelineExecutor:
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", message=".*already exists.*")
                     mlflow.sklearn.log_model(
-                        model, "fair_model", registered_model_name=model_name
+                        model, artifact_path="fair_model", registered_model_name=model_name
                     )
                 if self.verbose:
                     self.logger.log_warning(
@@ -862,7 +863,7 @@ class PipelineExecutor:
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", message=".*already exists.*")
                     mlflow.sklearn.log_model(
-                        results["model"], "fair_model", registered_model_name=model_name
+                        results["model"], artifact_path="fair_model", registered_model_name=model_name
                     )
             except Exception as e2:
                 if self.verbose:
