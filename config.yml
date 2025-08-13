@@ -32,3 +32,4 @@ mlflow:
   tags:
     framework: "fairness_pipeline_toolkit"
     version: "1.0.0"
+

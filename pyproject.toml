@@ -18,6 +18,8 @@ dependencies = [
     "pydantic>=2.0.0",
     "matplotlib>=3.5.0",
     "seaborn>=0.11.0",
+    "plotly>=5.0.0",
+    "tomli>=1.2.0;python_version<'3.11'",
     "jupyter>=1.0.0",
     "notebook>=6.4.0",
     "pytest>=8.4.1",
@@ -49,3 +51,27 @@ where = ["src"]
 [tool.ruff]
 line-length = 88
 target-version = "py312"
+
+[tool.fairness_pipeline_toolkit.visualization]
+# Brand colors from brandbook
+colors.primary = "#3A5CED"
+colors.secondary = "#7E7AE6"
+colors.accent = "#7BC0FF"
+colors.success = "#82E5E8"
+colors.warning = "#C2A9FF"
+colors.danger = "#D30B3B"
+
+# Typography specifications
+fonts.family = "Gordita, Figtree, sans-serif"
+fonts.title_size = 24
+fonts.subtitle_size = 20
+fonts.axis_size = 16
+
+# Layout specifications  
+layout.height = 600
+layout.margins.l = 60
+layout.margins.r = 150
+layout.margins.t = 100
+layout.margins.b = 80
+layout.margins.pad = 10
+

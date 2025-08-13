@@ -7,6 +7,7 @@ The executor manages the complex interactions between components while maintaini
 observability through structured logging and MLflow integration.
 """
 
+import os
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -17,7 +18,13 @@ from sklearn.preprocessing import StandardScaler
 import mlflow
 import mlflow.sklearn
 from mlflow.models.signature import infer_signature
+from mlflow.exceptions import MlflowException
 import tempfile
+import warnings
+
+# Suppress MLflow warnings about pip version resolution
+os.environ.setdefault('MLFLOW_SUPPRESS_ENVIRONMENT_WARNINGS', '1')
+warnings.filterwarnings("ignore", message=".*pip.*", module="mlflow.*")
 from rich.console import Console
 from rich.table import Table
 from rich import box
@@ -143,7 +150,7 @@ class PipelineExecutor:
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
             import yaml
             yaml.dump(self.config, f)
-            mlflow.log_artifact(f.name, artifact_path="config")
+            mlflow.log_artifact(f.name, "config")
     
     def _load_and_split_data(self) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
         """Load data and create train/test splits."""
@@ -609,29 +616,37 @@ class PipelineExecutor:
                 
                 signature = infer_signature(sample_features, sample_predictions)
                 
-                mlflow.sklearn.log_model(
-                    model, 
-                    "fair_model",
-                    signature=signature,
-                    input_example=sample_features.head(3),
-                    registered_model_name=f"{self.config['mlflow']['experiment_name']}_model",
-                    metadata={
-                        "fairness_constraint": getattr(model, 'constraint_name', 'unknown'),
-                        "sensitive_features": self.config['data']['sensitive_features'],
-                        "uses_fairlearn": getattr(model, 'use_fairlearn', False),
-                        "repair_level": getattr(results.get('transformer'), 'repair_level', None)
-                    }
-                )
+                # Log model with automatic versioning (suppresses "already exists" warnings)
+                model_name = f"{self.config['mlflow']['experiment_name']}_model"
+                
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", message=".*already exists.*")
+                    mlflow.sklearn.log_model(
+                        model, 
+                        "fair_model",
+                        signature=signature,
+                        input_example=sample_features.head(3),
+                        registered_model_name=model_name,
+                        metadata={
+                            "fairness_constraint": getattr(model, 'constraint_name', 'unknown'),
+                            "sensitive_features": self.config['data']['sensitive_features'],
+                            "uses_fairlearn": getattr(model, 'use_fairlearn', False),
+                            "repair_level": getattr(results.get('transformer'), 'repair_level', None)
+                        }
+                    )
                 
                 if self.verbose:
                     self.logger.logger.info("✅ Model logged with signature and metadata", extra={'component': 'mlflow', 'model_logging': 'success_with_signature'})
                     
             else:
-                mlflow.sklearn.log_model(
-                    model, 
-                    "fair_model",
-                    registered_model_name=f"{self.config['mlflow']['experiment_name']}_model"
-                )
+                model_name = f"{self.config['mlflow']['experiment_name']}_model"
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", message=".*already exists.*")
+                    mlflow.sklearn.log_model(
+                        model, 
+                        "fair_model",
+                        registered_model_name=model_name
+                    )
                 if self.verbose:
                     self.logger.log_warning("Model logged without signature (no sample data available)", {'model_logging': 'success_no_signature'})
                     
@@ -639,11 +654,14 @@ class PipelineExecutor:
             if self.verbose:
                 self.logger.log_warning(f"Enhanced model logging failed, using basic logging: {e}")
             try:
-                mlflow.sklearn.log_model(
-                    results['model'], 
-                    "fair_model",
-                    registered_model_name=f"{self.config['mlflow']['experiment_name']}_model"
-                )
+                model_name = f"{self.config['mlflow']['experiment_name']}_model"
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", message=".*already exists.*")
+                    mlflow.sklearn.log_model(
+                        results['model'], 
+                        "fair_model",
+                        registered_model_name=model_name
+                    )
             except Exception as e2:
                 if self.verbose:
                     self.logger.log_error("Basic model logging also failed", e2)
@@ -681,7 +699,7 @@ class PipelineExecutor:
                     import json
                     json_safe_details = self._make_json_serializable(details)
                     json.dump(json_safe_details, f, indent=2)
-                    mlflow.log_artifact(f.name, artifact_path="transformer_details")
+                    mlflow.log_artifact(f.name, "transformer_details")
                     
         except Exception as e:
             if self.verbose:

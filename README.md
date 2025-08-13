@@ -54,54 +54,51 @@ uv run python -m pytest tests/
 ## Architecture
 
 ```mermaid
-graph TB
-    subgraph "Configuration Layer"
-        CONFIG[config.yml<br/>• Data settings<br/>• ML parameters<br/>• Fairness constraints]
-        CONFIGMOD[config/<br/>• config_parser.py<br/>• logging_config.py]
-    end
+flowchart TD
+    %% Input Layer
+    DATA["Input Data<br/>• CSV files<br/>• Target & sensitive features<br/>• Train/test split"]
+    CONFIG["config.yml<br/>• Pipeline configuration<br/>• Model parameters<br/>• Fairness thresholds"]
     
-    subgraph "Pipeline Executor"
-        EXECUTOR[PipelineExecutor<br/>Central Orchestrator<br/>• Config validation<br/>• Component coordination<br/>• Performance monitoring]
-    end
+    %% Orchestration Layer
+    EXECUTOR["Pipeline Executor<br/>run_pipeline.py<br/>• Configuration parsing<br/>• Component coordination<br/>• Error handling"]
     
-    subgraph "Three-Step Pipeline Process"
-        STEP1[Step 1: Baseline Measurement<br/>BiasDetector + FairnessMetrics<br/>• Dataset audit<br/>• Baseline model training<br/>• Fairness metrics calculation]
+    %% Three-Step Process
+    subgraph PIPELINE ["Three-Step Fairness Pipeline"]
+        STEP1["Step 1: Baseline<br/>• Bias detection<br/>• Initial metrics<br/>• Baseline model"]
+        STEP2["Step 2: Mitigation<br/>• Data preprocessing<br/>• Bias reduction<br/>• Feature scaling"]
+        STEP3["Step 3: Fair Training<br/>• Constrained learning<br/>• Model optimization<br/>• Final evaluation"]
         
-        STEP2[Step 2: Data Processing<br/>BiasMitigationTransformer<br/>• Feature scaling<br/>• Bias mitigation transform<br/>• Data preprocessing]
-        
-        STEP3[Step 3: Fair Training<br/>FairnessConstrainedClassifier<br/>• Fairness constraints<br/>• Model training<br/>• Final evaluation]
+        STEP1 --> STEP2
+        STEP2 --> STEP3
     end
     
-    subgraph "Core Modules"
-        MEASUREMENT[Measurement Module<br/>bias_detector.py<br/>fairness_metrics.py]
-        PIPELINE[Pipeline Module<br/>bias_mitigation_transformer.py]
-        TRAINING[Training Module<br/>fairness_constrained_classifier.py<br/>fair_classifier.py]
+    %% Core Modules
+    subgraph MODULES ["Core Modules"]
+        MEASUREMENT["Measurement<br/>• BiasDetector<br/>• FairnessMetrics<br/>• Statistical tests"]
+        TRANSFORM["Pipeline<br/>• BiasMitigation<br/>• Data transforms<br/>• Preprocessing"]
+        TRAINING["Training<br/>• Fair classifiers<br/>• Constraint methods<br/>• Model validation"]
     end
     
-    subgraph "Integration Layer"
-        MLFLOW[MLflow Integration<br/>• Experiment tracking<br/>• Model signatures<br/>• Artifact storage<br/>• Reproducibility]
-        LOGGING[Structured Logging<br/>• Performance monitoring<br/>• Error tracking<br/>• Audit trail]
+    %% Integration Layer
+    subgraph INTEGRATION ["Integration Layer"]
+        MLFLOW["MLflow<br/>• Experiment tracking<br/>• Model registry<br/>• Artifact storage"]
+        LOGGING["Logging<br/>• Structured logs<br/>• Performance monitoring<br/>• Audit trails"]
     end
     
-    subgraph "Data & Outputs"
-        DATA[Input Data<br/>CSV files<br/>Synthetic generation]
-        OUTPUTS[Outputs<br/>• Trained fair models<br/>• Fairness reports<br/>• Performance metrics]
-    end
+    %% Outputs
+    RESULTS["Results<br/>• Fair models<br/>• Metrics reports<br/>• Improvement analysis"]
     
-    CONFIG --> EXECUTOR
-    CONFIGMOD --> EXECUTOR
+    %% Flow connections
     DATA --> EXECUTOR
+    CONFIG --> EXECUTOR
     
     EXECUTOR --> STEP1
-    EXECUTOR --> STEP2  
+    EXECUTOR --> STEP2
     EXECUTOR --> STEP3
     
-    STEP1 --> MEASUREMENT
-    STEP2 --> PIPELINE
-    STEP3 --> TRAINING
-    
-    STEP1 --> STEP2
-    STEP2 --> STEP3
+    STEP1 -.-> MEASUREMENT
+    STEP2 -.-> TRANSFORM
+    STEP3 -.-> TRAINING
     
     STEP1 --> MLFLOW
     STEP2 --> MLFLOW
@@ -112,22 +109,23 @@ graph TB
     STEP2 --> LOGGING
     STEP3 --> LOGGING
     
-    STEP3 --> OUTPUTS
-    MLFLOW --> OUTPUTS
+    STEP3 --> RESULTS
+    MLFLOW --> RESULTS
     
-    classDef configStyle fill:#E8F4FD,stroke:#333,stroke-width:2px
-    classDef executorStyle fill:#DAE8FC,stroke:#333,stroke-width:3px
-    classDef stepStyle fill:#D5E8D4,stroke:#333,stroke-width:2px
-    classDef moduleStyle fill:#FFE6CC,stroke:#333,stroke-width:1px
-    classDef integrationStyle fill:#E1D5E7,stroke:#333,stroke-width:2px
-    classDef dataStyle fill:#FFF2CC,stroke:#333,stroke-width:2px
+    %% Styling
+    classDef inputStyle fill:#E3F2FD,stroke:#1976D2,stroke-width:2px
+    classDef executorStyle fill:#E8F5E8,stroke:#388E3C,stroke-width:3px
+    classDef stepStyle fill:#FFF3E0,stroke:#F57C00,stroke-width:2px
+    classDef moduleStyle fill:#FCE4EC,stroke:#C2185B,stroke-width:2px
+    classDef integrationStyle fill:#F3E5F5,stroke:#7B1FA2,stroke-width:2px
+    classDef outputStyle fill:#E0F2F1,stroke:#00796B,stroke-width:2px
     
-    class CONFIG,CONFIGMOD configStyle
+    class DATA,CONFIG inputStyle
     class EXECUTOR executorStyle
     class STEP1,STEP2,STEP3 stepStyle
-    class MEASUREMENT,PIPELINE,TRAINING moduleStyle
+    class MEASUREMENT,TRANSFORM,TRAINING moduleStyle
     class MLFLOW,LOGGING integrationStyle
-    class DATA,OUTPUTS dataStyle
+    class RESULTS outputStyle
 ```
 
 ## What It Does

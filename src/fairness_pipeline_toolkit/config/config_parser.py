@@ -1,10 +1,16 @@
 """Configuration parsing and validation."""
 
+import sys
 import yaml
 import re
 from pathlib import Path
 from typing import Dict, Any, Union, List, Optional
 from pydantic import BaseModel, Field, field_validator, ValidationError
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 
 class DataConfig(BaseModel):
@@ -68,6 +74,104 @@ class MLflowConfig(BaseModel):
         if re.search(r'[<>:"/\\|?*]', v):
             raise ValueError("experiment_name contains invalid characters")
         return v
+
+
+class VisualizationColorsConfig(BaseModel):
+    primary: str = Field("#3A5CED", pattern=r'^#[0-9A-Fa-f]{6}$', description="Primary brand color")
+    secondary: str = Field("#7E7AE6", pattern=r'^#[0-9A-Fa-f]{6}$', description="Secondary brand color")
+    accent: str = Field("#7BC0FF", pattern=r'^#[0-9A-Fa-f]{6}$', description="Accent color")
+    success: str = Field("#82E5E8", pattern=r'^#[0-9A-Fa-f]{6}$', description="Success color")
+    warning: str = Field("#C2A9FF", pattern=r'^#[0-9A-Fa-f]{6}$', description="Warning color")
+    danger: str = Field("#D30B3B", pattern=r'^#[0-9A-Fa-f]{6}$', description="Danger/error color")
+
+
+class VisualizationFontsConfig(BaseModel):
+    family: str = Field("Gordita, Figtree, sans-serif", description="Font family")
+    title_size: int = Field(24, ge=12, le=48, description="Title font size")
+    subtitle_size: int = Field(20, ge=10, le=36, description="Subtitle font size")
+    axis_size: int = Field(16, ge=8, le=24, description="Axis font size")
+
+
+class VisualizationLayoutConfig(BaseModel):
+    height: int = Field(600, ge=200, le=1200, description="Default plot height")
+    margins: Dict[str, int] = Field(
+        default_factory=lambda: {"l": 60, "r": 150, "t": 100, "b": 80, "pad": 10},
+        description="Plot margins (Plotly format: l, r, t, b, pad)"
+    )
+
+
+class VisualizationConfig(BaseModel):
+    theme: str = Field("brandbook", description="Visualization theme")
+    colors: VisualizationColorsConfig = Field(default_factory=VisualizationColorsConfig)
+    fonts: VisualizationFontsConfig = Field(default_factory=VisualizationFontsConfig)
+    layout: VisualizationLayoutConfig = Field(default_factory=VisualizationLayoutConfig)
+
+    @classmethod
+    def from_pyproject(cls, pyproject_path: Optional[Path] = None) -> "VisualizationConfig":
+        """Load visualization configuration from pyproject.toml file."""
+        if pyproject_path is None:
+            # Find pyproject.toml by walking up from current working directory
+            current_dir = Path.cwd()
+            for parent in [current_dir] + list(current_dir.parents):
+                candidate = parent / "pyproject.toml"
+                if candidate.exists():
+                    pyproject_path = candidate
+                    break
+        
+        if pyproject_path and pyproject_path.exists():
+            try:
+                with open(pyproject_path, "rb") as f:
+                    config_data = tomllib.load(f)
+                
+                viz_config = (
+                    config_data
+                    .get("tool", {})
+                    .get("fairness_pipeline_toolkit", {})
+                    .get("visualization", {})
+                )
+                
+                if viz_config:
+                    return cls._from_pyproject_dict(viz_config)
+            except Exception:
+                # If there's any error loading from pyproject.toml, fall back to defaults
+                pass
+        
+        # Return default configuration if no pyproject.toml found or error occurred
+        return cls()
+
+    @classmethod
+    def _from_pyproject_dict(cls, data: Dict[str, Any]) -> "VisualizationConfig":
+        """Create configuration from pyproject.toml dictionary data."""
+        # Handle nested dot notation (e.g., colors.primary -> {colors: {primary: ...}})
+        def unflatten_dict(flat_dict: Dict[str, Any]) -> Dict[str, Any]:
+            result = {}
+            for key, value in flat_dict.items():
+                parts = key.split('.')
+                current = result
+                for part in parts[:-1]:
+                    if part not in current:
+                        current[part] = {}
+                    current = current[part]
+                current[parts[-1]] = value
+            return result
+        
+        nested_data = unflatten_dict(data)
+        
+        # Create config objects
+        colors_data = nested_data.get("colors", {})
+        fonts_data = nested_data.get("fonts", {})
+        layout_data = nested_data.get("layout", {})
+
+        colors = VisualizationColorsConfig(**colors_data) if colors_data else VisualizationColorsConfig()
+        fonts = VisualizationFontsConfig(**fonts_data) if fonts_data else VisualizationFontsConfig()
+        layout = VisualizationLayoutConfig(**layout_data) if layout_data else VisualizationLayoutConfig()
+
+        return cls(
+            theme=nested_data.get("theme", "brandbook"),
+            colors=colors,
+            fonts=fonts,
+            layout=layout
+        )
 
 
 class PipelineConfig(BaseModel):
