@@ -51,28 +51,50 @@ python -m pytest tests/
 uv run python -m pytest tests/
 ```
 
-## How It Works
+## Architecture
 
 ```mermaid
-flowchart LR
-    INPUT["📊 Your Data<br/>+ config.yml"] 
-    STEP1["🔍 Step 1<br/>Find Bias"]
-    STEP2["🔧 Step 2<br/>Fix Bias"] 
-    STEP3["✅ Step 3<br/>Fair Model"]
-    OUTPUT["📈 Results<br/>Better Fairness"]
+flowchart TD
+    %% Input Layer
+    DATA["Input Data<br/>CSV files with target and<br/>sensitive features"]
+    CONFIG["config.yml<br/>Pipeline configuration<br/>Fairness parameters"]
     
-    INPUT --> STEP1 --> STEP2 --> STEP3 --> OUTPUT
+    %% Orchestration
+    EXECUTOR["Pipeline Executor<br/>run_pipeline.py"]
     
-    classDef default fill:#f9f9f9,stroke:#333,stroke-width:2px,color:#000
-    classDef highlight fill:#e8f4fd,stroke:#1976d2,stroke-width:3px,color:#000
+    %% Three-Step Process
+    STEP1["Step 1: Baseline Measurement<br/>BiasDetector + FairnessMetrics<br/>Audit data and train baseline model"]
+    STEP2["Step 2: Bias Mitigation<br/>BiasMitigationTransformer<br/>Preprocess data to reduce bias"]
+    STEP3["Step 3: Fair Training<br/>FairnessConstrainedClassifier<br/>Train model with fairness constraints"]
     
-    class INPUT,OUTPUT highlight
+    %% Integration
+    MLFLOW["MLflow Integration<br/>Experiment tracking<br/>Model registry"]
+    
+    %% Output
+    RESULTS["Results<br/>Fair model + improvement report<br/>Fairness metrics comparison"]
+    
+    %% Flow
+    DATA --> EXECUTOR
+    CONFIG --> EXECUTOR
+    EXECUTOR --> STEP1
+    STEP1 --> STEP2
+    STEP2 --> STEP3
+    STEP1 --> MLFLOW
+    STEP2 --> MLFLOW
+    STEP3 --> MLFLOW
+    STEP3 --> RESULTS
+    
+    %% Styling
+    classDef input fill:#E3F2FD,stroke:#1976D2,stroke-width:2px
+    classDef process fill:#FFF3E0,stroke:#F57C00,stroke-width:2px
+    classDef integration fill:#F3E5F5,stroke:#7B1FA2,stroke-width:2px
+    classDef output fill:#E8F5E8,stroke:#388E3C,stroke-width:2px
+    
+    class DATA,CONFIG input
+    class EXECUTOR,STEP1,STEP2,STEP3 process
+    class MLFLOW integration
+    class RESULTS output
 ```
-
-**Simple 3-step process:**
-1. **Find Bias**: Measure how unfair your current model is
-2. **Fix Bias**: Clean the data and apply fairness constraints  
-3. **Fair Model**: Get a model that treats all groups more equally
 
 ## What It Does
 
@@ -167,28 +189,64 @@ uv sync --extra notebook
 Loading configuration from: config.yml
 ✓ Configuration validated
 
-Baseline Dataset Report:
-Dataset Shape: (1000, 5)
-Target Rate Difference: 0.234
+BASELINE PREDICTION REPORT
 
-Baseline Prediction Report:
-Demographic Parity Difference: 0.234 (VIOLATION: > 0.1)
-Equalized Odds Difference: 0.187 (VIOLATION: > 0.1)
-Accuracy: 0.823
+     Performance Metrics      
+                              
+ Metric          Value
+ ──────────────────────────── 
+ Accuracy        0.9075
+ Precision       0.8956
+ Recall          0.9075
 
-Final Prediction Report:
-Demographic Parity Difference: 0.089 (OK: < 0.1)
-Equalized Odds Difference: 0.095 (OK: < 0.1)
-Accuracy: 0.801
 
-Improvement summary:
-Accuracy: 0.823 → 0.801
-Primary Fairness Metric (demographic_parity_difference):
-  Baseline: 0.234
-  Final: 0.089
-  Improvement: 0.145
+                           Fairness Metrics                            
+                                                                       
+ Metric                        Value     Status       Threshold
+ ───────────────────────────────────────────────────────────────────── 
+ Demographic Parity Difference  0.0487   ✅ OK           ≤ 0.1
+ Equalized Odds Difference      0.4848   ❌ VIOLATION    ≤ 0.1
 
-✓ Pipeline execution completed successfully
+⚠️  1 fairness violations detected
+
+FINAL PREDICTION REPORT
+
+     Performance Metrics      
+                              
+ Metric          Value
+ ──────────────────────────── 
+ Accuracy        0.8950
+ Precision       0.8824
+ Recall          0.8950
+
+
+                           Fairness Metrics                            
+                                                                       
+ Metric                        Value     Status       Threshold
+ ───────────────────────────────────────────────────────────────────── 
+ Demographic Parity Difference  0.1429   ❌ VIOLATION    ≤ 0.1
+ Equalized Odds Difference      0.6667   ❌ VIOLATION    ≤ 0.1
+
+⚠️  2 fairness violations detected
+
+IMPROVEMENT COMPARISON
+
+                   Performance Metrics Comparison                    
+                                                                     
+ Metric     Baseline    Final          Change           Status
+ ─────────────────────────────────────────────────────────────────── 
+ Accuracy    0.9075    0.8950     -0.0125 (-1.4%)    📉 Decreased
+
+                      Fairness Metrics Comparison                      
+                                                                       
+ Metric                        Baseline   Final   Improvement   Status
+ ─────────────────────────────────────────────────────────────────────
+ 🎯 Demographic Parity Difference  0.0487   0.1429   -0.0942     ❌ Worse
+    (Primary)
+
+Summary: Primary fairness goal not achieved (-0.0942 change)
+
+Successfully registered model 'fairness_pipeline_model'.
 ```
 
 ## License
