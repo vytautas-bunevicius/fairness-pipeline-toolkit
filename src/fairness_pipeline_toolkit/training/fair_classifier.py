@@ -1,4 +1,9 @@
-"""Base fair classifier interface."""
+"""Defines the abstract base class for all fairness-aware classifiers.
+
+This module provides a standardized interface for classifiers that incorporate
+fairness considerations, ensuring they are compatible with scikit-learn pipelines
+and other tools within the toolkit.
+"""
 
 from abc import ABC, abstractmethod
 from typing import Any, Optional, Dict
@@ -8,13 +13,20 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 
 
 class FairClassifier(BaseEstimator, ClassifierMixin, ABC):
-    """Abstract base class for fairness-aware classifiers."""
+    """Defines the common interface for all fairness-aware classifier models.
+
+    This abstract class ensures that any fairness-enhancing classifier implements
+    the essential `fit`, `predict`, and `predict_proba` methods, making them
+    interchangeable. It also provides common helper methods for input validation
+    and state checking, promoting consistency across different fairness techniques.
+    """
 
     def __init__(self, sensitive_features: Optional[list] = None):
-        """Initialize fair classifier.
+        """Initializes the fair classifier.
 
         Args:
-            sensitive_features: List of sensitive feature column names
+            sensitive_features: A list of column names that identify sensitive attributes
+                (e.g., race, gender). These are used by subclasses to apply fairness logic.
         """
         self.sensitive_features = sensitive_features or []
         self.is_fitted_ = False
@@ -27,15 +39,20 @@ class FairClassifier(BaseEstimator, ClassifierMixin, ABC):
         y: pd.Series,
         sensitive_features: Optional[pd.DataFrame] = None,
     ) -> "FairClassifier":
-        """Fit the fair classifier to training data.
+        """Trains a fairness-aware model.
+
+        Subclasses must implement this method to train their underlying model while
+        incorporating fairness logic based on the sensitive features.
 
         Args:
-            X: Feature matrix
-            y: Target labels
-            sensitive_features: Sensitive attribute values
+            X: The training input samples.
+            y: The target values.
+            sensitive_features: A DataFrame containing the sensitive feature values.
+                If not provided, subclasses should handle its absence gracefully,
+                typically by using the features specified during initialization.
 
         Returns:
-            Self for method chaining
+            The fitted classifier instance.
         """
         pass
 
@@ -43,14 +60,18 @@ class FairClassifier(BaseEstimator, ClassifierMixin, ABC):
     def predict(
         self, X: pd.DataFrame, sensitive_features: Optional[pd.DataFrame] = None
     ) -> np.ndarray:
-        """Make predictions using the fair classifier.
+        """Generates predictions from the trained fair model.
+
+        Subclasses must implement this method to return predictions, ensuring that
+        any fairness adjustments learned during `fit` are applied.
 
         Args:
-            X: Feature matrix
-            sensitive_features: Sensitive attribute values
+            X: The input samples for prediction.
+            sensitive_features: A DataFrame with sensitive feature values, which may be
+                required by some models to make fair predictions.
 
         Returns:
-            Predicted labels
+            An array of predicted class labels.
         """
         pass
 
@@ -58,19 +79,22 @@ class FairClassifier(BaseEstimator, ClassifierMixin, ABC):
     def predict_proba(
         self, X: pd.DataFrame, sensitive_features: Optional[pd.DataFrame] = None
     ) -> np.ndarray:
-        """Predict class probabilities.
+        """Predicts class probabilities from the trained fair model.
+
+        Subclasses must implement this method. It's essential for models where
+        prediction confidence is important.
 
         Args:
-            X: Feature matrix
-            sensitive_features: Sensitive attribute values
+            X: The input samples for prediction.
+            sensitive_features: A DataFrame with sensitive feature values.
 
         Returns:
-            Class probabilities
+            An array of class probabilities.
         """
         pass
 
     def _validate_input(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> None:
-        """Validate input data format."""
+        """Ensures that input data `X` and `y` adhere to the expected types."""
         if not isinstance(X, pd.DataFrame):
             raise TypeError("X must be a pandas DataFrame")
 
@@ -78,12 +102,12 @@ class FairClassifier(BaseEstimator, ClassifierMixin, ABC):
             raise TypeError("y must be a pandas Series or numpy array")
 
     def _check_is_fitted(self) -> None:
-        """Check if classifier has been fitted."""
+        """Verifies that the classifier has been trained before calling `predict` or `predict_proba`."""
         if not self.is_fitted_:
             raise ValueError("Classifier must be fitted before making predictions")
 
     def get_fairness_info(self) -> Dict[str, Any]:
-        """Get information about fairness constraints and methods."""
+        """Retrieves basic information about the classifier's fairness configuration."""
         return {
             "sensitive_features": self.sensitive_features,
             "is_fitted": self.is_fitted_,

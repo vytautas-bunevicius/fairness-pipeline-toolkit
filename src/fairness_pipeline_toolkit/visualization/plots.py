@@ -1,10 +1,10 @@
 """Plotting utilities for fairness metrics visualization.
 
 Provides standardized plotting functions using Plotly with consistent styling
-and configurable branding through dependency injection.
+and configurable styling through dependency injection.
 """
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 from pathlib import Path
 import pandas as pd
 import plotly.graph_objects as go
@@ -69,9 +69,9 @@ def _save_as_static(
 ) -> None:
     """Exports figure as static image for GitHub rendering and documentation.
 
-    Uses SVG format by default for crisp vector graphics that scale well in
+    Uses SVG format by default for vector graphics that scale well in
     documentation. Creates output directory if needed and applies configured
-    export settings for consistent quality across all plots.
+    export settings for consistent output across all plots.
 
     Args:
         fig: Plotly figure to export
@@ -108,7 +108,7 @@ def plot_success_rates_by_groups(
     data: pd.DataFrame,
     viz_config: VisualizationConfig,
     target_column: str = "target",
-    sensitive_features: List[str] = ["race", "sex"],
+    sensitive_features: Optional[List[str]] = None,
     title: str = "Success Rates by Demographic Groups",
 ) -> go.Figure:
     """Creates side-by-side bar charts comparing success rates across demographic groups.
@@ -127,6 +127,8 @@ def plot_success_rates_by_groups(
     Returns:
         Plotly figure with subplots for each sensitive feature
     """
+    if sensitive_features is None:
+        sensitive_features = ["race", "sex"]
     n_features = len(sensitive_features)
     fig = make_subplots(
         rows=1,
@@ -154,7 +156,7 @@ def plot_success_rates_by_groups(
                 x=success_rates.index,
                 y=success_rates.values,
                 name=feature.title(),
-                marker_color=color,
+                marker=dict(color=color),
                 text=[f"{val:.2f}" for val in success_rates.values],
                 textposition="outside",
                 textfont=dict(size=12, color="#1A1E21"),
@@ -188,7 +190,7 @@ def plot_combined_success_rates(
     data: pd.DataFrame,
     viz_config: VisualizationConfig,
     target_column: str = "target",
-    sensitive_features: List[str] = ["race", "sex"],
+    sensitive_features: Optional[List[str]] = None,
     title: str = "Success Rate by Combined Demographics",
 ) -> go.Figure:
     """Creates grouped bar chart showing success rates for intersectional demographics.
@@ -207,6 +209,8 @@ def plot_combined_success_rates(
     Returns:
         Plotly figure with grouped bar chart
     """
+    if sensitive_features is None:
+        sensitive_features = ["race", "sex"]
     if len(sensitive_features) != 2:
         raise ValueError("Combined plot requires exactly 2 sensitive features")
 
@@ -229,7 +233,7 @@ def plot_combined_success_rates(
                 name=f"{feature2.title()}: {col}",
                 x=combined_rates.index,
                 y=combined_rates[col],
-                marker_color=color,
+                marker=dict(color=color),
                 text=[
                     f"{val:.2f}" if not pd.isna(val) else ""
                     for val in combined_rates[col]
@@ -256,6 +260,42 @@ def plot_combined_success_rates(
     _save_as_static(fig, "combined_success_rates", viz_config)
 
     return fig
+
+
+def _add_before_after_bars(
+    fig: go.Figure,
+    labels: List[str],
+    before_values: List[float],
+    after_values: List[float],
+    before_color: str,
+    after_color: str,
+    viz_config: VisualizationConfig,
+) -> None:
+    fig.add_trace(
+        go.Bar(
+            name="Before",
+            x=labels,
+            y=before_values,
+            marker=dict(color=before_color),
+            text=[f"{val:.3f}" for val in before_values],
+            textposition="outside",
+            textfont=dict(size=12, color="#1A1E21"),
+            hovertemplate="<b>%{x}</b><br>Before: %{y:.3f}<br><extra></extra>",
+        )
+    )
+
+    fig.add_trace(
+        go.Bar(
+            name="After",
+            x=labels,
+            y=after_values,
+            marker=dict(color=after_color),
+            text=[f"{val:.3f}" for val in after_values],
+            textposition="outside",
+            textfont=dict(size=12, color="#1A1E21"),
+            hovertemplate="<b>%{x}</b><br>After: %{y:.3f}<br><extra></extra>",
+        )
+    )
 
 
 def plot_fairness_comparison(
@@ -298,32 +338,14 @@ def plot_fairness_comparison(
 
     fig = go.Figure()
 
-    fig.add_trace(
-        go.Bar(
-            name="Before",
-            x=metric_labels,
-            y=baseline_values,
-            marker_color=viz_config.colors.danger,
-            text=[f"{val:.3f}" for val in baseline_values],
-            textposition="outside",
-            textfont=dict(size=12, color="#1A1E21"),
-            hovertemplate="<b>%{x}</b><br>"
-            + "Before: %{y:.3f}<br>"
-            + "<extra></extra>",
-        )
-    )
-
-    fig.add_trace(
-        go.Bar(
-            name="After",
-            x=metric_labels,
-            y=final_values,
-            marker_color=viz_config.colors.primary,
-            text=[f"{val:.3f}" for val in final_values],
-            textposition="outside",
-            textfont=dict(size=12, color="#1A1E21"),
-            hovertemplate="<b>%{x}</b><br>" + "After: %{y:.3f}<br>" + "<extra></extra>",
-        )
+    _add_before_after_bars(
+        fig,
+        metric_labels,
+        baseline_values,
+        final_values,
+        viz_config.colors.danger,
+        viz_config.colors.primary,
+        viz_config,
     )
 
     fig.add_hline(
@@ -356,7 +378,7 @@ def plot_performance_comparison(
     """Compares model performance metrics before and after bias mitigation.
 
     Shows accuracy, precision, and recall side-by-side to assess whether fairness
-    improvements come at the cost of predictive performance. Essential for evaluating
+    improvements come at the cost of predictive performance. Used for evaluating
     the fairness-performance trade-off in bias mitigation strategies.
 
     Args:
@@ -385,32 +407,14 @@ def plot_performance_comparison(
 
     fig = go.Figure()
 
-    fig.add_trace(
-        go.Bar(
-            name="Before",
-            x=metric_labels,
-            y=baseline_values,
-            marker_color=viz_config.colors.accent,
-            text=[f"{val:.3f}" for val in baseline_values],
-            textposition="outside",
-            textfont=dict(size=12, color="#1A1E21"),
-            hovertemplate="<b>%{x}</b><br>"
-            + "Before: %{y:.3f}<br>"
-            + "<extra></extra>",
-        )
-    )
-
-    fig.add_trace(
-        go.Bar(
-            name="After",
-            x=metric_labels,
-            y=final_values,
-            marker_color=viz_config.colors.primary,
-            text=[f"{val:.3f}" for val in final_values],
-            textposition="outside",
-            textfont=dict(size=12, color="#1A1E21"),
-            hovertemplate="<b>%{x}</b><br>" + "After: %{y:.3f}<br>" + "<extra></extra>",
-        )
+    _add_before_after_bars(
+        fig,
+        metric_labels,
+        baseline_values,
+        final_values,
+        viz_config.colors.accent,
+        viz_config.colors.primary,
+        viz_config,
     )
 
     fig = _apply_base_layout(fig, viz_config, title, width=600)

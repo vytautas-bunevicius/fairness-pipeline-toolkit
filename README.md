@@ -54,24 +54,25 @@ uv run python -m pytest tests/
 ## Architecture
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'fontFamily': 'Gordita, Figtree, sans-serif', 'primaryColor': '#B8CCF4', 'primaryTextColor': '#1A1E21', 'lineColor': '#48494C', 'fontSize': '14px'}}}%%
 flowchart TD
     %% Input Layer
-    DATA["Input Data<br/>CSV files with target and<br/>sensitive features"]
-    CONFIG["config.yml<br/>Pipeline configuration<br/>Fairness parameters"]
+    DATA("Input Data<br/>CSV files with target and<br/>sensitive features"):::prepStyle
+    CONFIG("config.yml<br/>Pipeline configuration<br/>Fairness parameters"):::prepStyle
     
     %% Orchestration
-    EXECUTOR["Pipeline Executor<br/>run_pipeline.py"]
+    EXECUTOR("Pipeline Executor<br/>run_pipeline.py"):::analysisStyle
     
     %% Three-Step Process
-    STEP1["Step 1: Baseline Measurement<br/>BiasDetector + FairnessMetrics<br/>Audit data and train baseline model"]
-    STEP2["Step 2: Bias Mitigation<br/>BiasMitigationTransformer<br/>Preprocess data to reduce bias"]
-    STEP3["Step 3: Fair Training<br/>FairnessConstrainedClassifier<br/>Train model with fairness constraints"]
+    STEP1("Step 1: Baseline Measurement<br/>BiasDetector + FairnessMetrics<br/>Audit data and train baseline model"):::analysisStyle
+    STEP2("Step 2: Bias Mitigation<br/>BiasMitigationTransformer<br/>Preprocess data to reduce bias"):::decisionStyle
+    STEP3("Step 3: Fair Training<br/>FairnessConstrainedClassifier<br/>Train model with fairness constraints"):::decisionStyle
     
     %% Integration
-    MLFLOW["MLflow Integration<br/>Experiment tracking<br/>Model registry"]
+    MLFLOW("MLflow Integration<br/>Experiment tracking<br/>Model registry"):::validationStyle
     
     %% Output
-    RESULTS["Results<br/>Fair model + improvement report<br/>Fairness metrics comparison"]
+    RESULTS("Results<br/>Fair model + improvement report<br/>Fairness metrics comparison"):::documentationStyle
     
     %% Flow
     DATA --> EXECUTOR
@@ -85,15 +86,11 @@ flowchart TD
     STEP3 --> RESULTS
     
     %% Styling
-    classDef input fill:#E3F2FD,stroke:#1976D2,stroke-width:2px
-    classDef process fill:#FFF3E0,stroke:#F57C00,stroke-width:2px
-    classDef integration fill:#F3E5F5,stroke:#7B1FA2,stroke-width:2px
-    classDef output fill:#E8F5E8,stroke:#388E3C,stroke-width:2px
-    
-    class DATA,CONFIG input
-    class EXECUTOR,STEP1,STEP2,STEP3 process
-    class MLFLOW integration
-    class RESULTS output
+    classDef prepStyle fill:#7E7AE6,stroke:#3D3270,stroke-width:2px,color:#FFFFFF,rx:4,ry:4
+    classDef analysisStyle fill:#3A5CED,stroke:#18407F,stroke-width:2px,color:#FFFFFF,rx:4,ry:4
+    classDef decisionStyle fill:#85A2FF,stroke:#18407F,stroke-width:2px,color:#FFFFFF,rx:4,ry:4
+    classDef validationStyle fill:#82E5E8,stroke:#1C8BA5,stroke-width:2px,color:#FFFFFF,rx:4,ry:4
+    classDef documentationStyle fill:#C2A9FF,stroke:#3D3270,stroke-width:2px,color:#FFFFFF,rx:4,ry:4
 ```
 
 ## What It Does
@@ -248,6 +245,84 @@ Summary: Primary fairness goal not achieved (-0.0942 change)
 
 Successfully registered model 'fairness_pipeline_model'.
 ```
+
+# Creating Professional Flowcharts with Mermaid
+
+To create professional flowcharts with a consistent color scheme like the example, follow this template:
+
+```
+%%{init: {'theme': 'base', 'themeVariables': { 'fontFamily': 'Gordita, Figtree, sans-serif', 'primaryColor': '#B8CCF4', 'primaryTextColor': '#1A1E21', 'lineColor': '#48494C', 'fontSize': '14px'}}}%%
+flowchart TD
+    S1("1 First Step Title"):::prepStyle
+    S2("2 Second Step<br>Title"):::analysisStyle
+    S3("3 Third Step<br>Title"):::decisionStyle
+    
+    S1 --> S2
+    S2 --> S3
+    
+    classDef prepStyle fill:#7E7AE6,stroke:#3D3270,stroke-width:2px,color:#FFFFFF,rx:4,ry:4
+    classDef analysisStyle fill:#3A5CED,stroke:#18407F,stroke-width:2px,color:#FFFFFF,rx:4,ry:4
+    classDef decisionStyle fill:#85A2FF,stroke:#18407F,stroke-width:2px,color:#FFFFFF,rx:4,ry:4
+    classDef validationStyle fill:#82E5E8,stroke:#1C8BA5,stroke-width:2px,color:#FFFFFF,rx:4,ry:4
+    classDef documentationStyle fill:#C2A9FF,stroke:#3D3270,stroke-width:2px,color:#FFFFFF,rx:4,ry:4
+```
+
+## Style Guide
+
+This color palette provides a professional blue-purple theme with distinct colors for different process stages:
+- **prepStyle**: Purple-blue (`#7E7AE6`) - For preparation/planning steps
+- **analysisStyle**: Primary blue (`#3A5CED`) - For analytical/assessment steps
+- **decisionStyle**: Light blue (`#85A2FF`) - For decision/selection steps
+- **validationStyle**: Aqua (`#82E5E8`) - For validation/verification steps
+- **documentationStyle**: Lavender (`#C2A9FF`) - For documentation/reporting steps
+
+## Key Tips for Avoiding Rendering Issues
+
+1. Use `flowchart TD` instead of `graph TD`
+2. Use parentheses `()` for nodes instead of square brackets `[]`
+3. Avoid periods after numbers (use "1 Text" not "1. Text")
+4. Use "and" instead of ampersands (&)
+5. For multi-line text, use `<br>` tags
+6. For feedback loops, use dotted lines: `S7 -.-> S3`
+7. Define separate arrows for each feedback connection (don't use `&` to join them)
+
+## Complete Example
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'fontFamily': 'Gordita, Figtree, sans-serif', 'primaryColor': '#B8CCF4', 'primaryTextColor': '#1A1E21', 'lineColor': '#48494C', 'fontSize': '14px'}}}%%
+flowchart TD
+    S1("1 Preparation and Planning"):::prepStyle
+    S2("2 Historical Context<br>Assessment"):::analysisStyle
+    S3("3 Fairness Definition<br>Selection"):::decisionStyle
+    S4("4 Bias Source<br>Identification"):::analysisStyle
+    S5("5 Metrics Implementation<br>and Analysis"):::analysisStyle
+    S6("6 Integration and Synthesis"):::decisionStyle
+    S7("7 Validation and Verification"):::validationStyle
+    S8("8 Documentation and Reporting"):::documentationStyle
+    
+    S1 --> S2
+    S2 --> S3
+    S3 --> S4
+    S4 --> S5
+    S5 --> S6
+    S6 --> S7
+    S7 --> S8
+    
+    %% Optional Feedback Loops
+    S7 -.-> S2
+    S7 -.-> S3
+    S7 -.-> S4
+    S7 -.-> S5
+    S7 -.-> S6
+    
+    classDef prepStyle fill:#7E7AE6,stroke:#3D3270,stroke-width:2px,color:#FFFFFF,rx:4,ry:4
+    classDef analysisStyle fill:#3A5CED,stroke:#18407F,stroke-width:2px,color:#FFFFFF,rx:4,ry:4
+    classDef decisionStyle fill:#85A2FF,stroke:#18407F,stroke-width:2px,color:#FFFFFF,rx:4,ry:4
+    classDef validationStyle fill:#82E5E8,stroke:#1C8BA5,stroke-width:2px,color:#FFFFFF,rx:4,ry:4
+    classDef documentationStyle fill:#C2A9FF,stroke:#3D3270,stroke-width:2px,color:#FFFFFF,rx:4,ry:4
+```
+
+This template provides a visually appealing and professional diagram that clearly distinguishes between different process stages while maintaining a cohesive design language through the blue-purple color palette.
 
 ## License
 

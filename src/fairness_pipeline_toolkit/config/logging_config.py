@@ -1,4 +1,9 @@
-"""Structured logging configuration for the fairness pipeline toolkit."""
+"""Configures structured JSON logging to provide consistent, machine-readable output.
+
+This module sets up formatters and loggers to ensure that all pipeline events,
+metrics, and errors can be easily parsed, filtered, and ingested by monitoring
+systems. It separates performance metrics from general logs for clarity.
+"""
 
 import logging
 import logging.config
@@ -10,10 +15,20 @@ import time
 
 
 class StructuredFormatter(logging.Formatter):
-    """Custom formatter for structured JSON logging."""
+    """A custom logging formatter that outputs log records as a single JSON object.
+
+    This approach ensures that log entries are self-contained and machine-readable,
+    which is essential for reliable parsing and querying in log management systems.
+    It includes core metadata by default and allows for adding extra context fields.
+    """
 
     def format(self, record: logging.LogRecord) -> str:
-        """Format log record as structured JSON."""
+        """Formats a log record into a JSON string.
+
+        The base log data includes standard fields like timestamp and level. It also
+        dynamically includes any extra fields passed to the logger, allowing for
+        flexible and context-rich structured logs.
+        """
         log_data = {
             "timestamp": self.formatTime(record, self.datefmt),
             "level": record.levelname,
@@ -44,14 +59,19 @@ class StructuredFormatter(logging.Formatter):
 
 
 class PerformanceLogger:
-    """Logger for performance monitoring."""
+    """A dedicated logger for capturing performance-related metrics and timings.
+
+    This class provides a simple interface for timing operations and logging key
+    metrics. Separating performance logging from general application logging allows
+    for focused performance analysis without the noise of other log messages.
+    """
 
     def __init__(self, logger_name: str = "fairness_pipeline.performance"):
         self.logger = logging.getLogger(logger_name)
         self._start_times = {}
 
     def start_timer(self, operation_name: str) -> None:
-        """Start timing an operation."""
+        """Records the start time of a named operation for later duration calculation."""
         self._start_times[operation_name] = time.time()
         self.logger.info(
             f"Started {operation_name}",
@@ -63,7 +83,7 @@ class PerformanceLogger:
         )
 
     def end_timer(self, operation_name: str) -> float:
-        """End timing an operation and return duration."""
+        """Calculates and logs the duration of a named operation since it started."""
         if operation_name not in self._start_times:
             self.logger.warning(f"Timer for {operation_name} was not started")
             return 0.0
@@ -110,7 +130,12 @@ def setup_logging(
     structured: bool = True,
     console_output: bool = True,
 ) -> logging.Logger:
-    """Setup structured logging configuration.
+    """Initializes and configures the root logger for the entire application.
+
+    This function provides a central entry point for setting up logging handlers
+    (for console or file output) and formatters (structured JSON or plain text).
+    It also sets the logging levels for noisy third-party libraries to reduce
+    log spam and keep the application's output clean.
 
     Args:
         level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
@@ -173,7 +198,13 @@ def setup_logging(
 
 
 class PipelineLogger:
-    """Enhanced logger for pipeline operations."""
+    """A wrapper class providing a context-aware logger for pipeline stages.
+
+    This logger simplifies logging for different pipeline components by automatically
+    injecting component and stage information into log records. It provides
+    helper methods for common logging patterns, such as starting/ending stages
+    and logging errors, to ensure consistency in log structure.
+    """
 
     def __init__(self, component_name: str):
         self.logger = logging.getLogger(f"fairness_pipeline.{component_name}")
@@ -219,7 +250,7 @@ class PipelineLogger:
         else:
             self.logger.error(message, extra=extra)
 
-    def log_config_validation(self, config: Dict[str, Any], errors: list) -> None:
+    def log_config_validation(self, errors: list) -> None:
         """Log configuration validation results."""
         if errors:
             self.logger.error(
@@ -282,5 +313,10 @@ class PipelineLogger:
 
 
 def get_pipeline_logger(component_name: str) -> PipelineLogger:
-    """Get a configured pipeline logger for a component."""
+    """A factory function to get a configured PipelineLogger instance.
+
+    This ensures that all components get a logger with a consistent naming
+    scheme (fairness_pipeline.<component_name>) without needing to instantiate
+    the PipelineLogger directly.
+    """
     return PipelineLogger(component_name)

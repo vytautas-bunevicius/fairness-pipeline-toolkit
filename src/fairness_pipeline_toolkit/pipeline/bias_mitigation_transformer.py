@@ -19,9 +19,9 @@ class BiasMitigationTransformer(BaseEstimator, TransformerMixin):
     """
     Reduces disparate impact by equalizing feature distributions across demographic groups.
 
-    Traditional bias mitigation often destroys feature correlations, leading to poor model
-    performance. This transformer offers multiple strategies that balance fairness improvements
-    with predictive utility by preserving statistical relationships in the data.
+    Some bias mitigation methods can negatively affect feature correlations, leading to
+    lower model performance. This transformer provides multiple strategies to balance
+    fairness and predictive utility by preserving statistical relationships in the data.
     """
 
     def __init__(
@@ -47,6 +47,7 @@ class BiasMitigationTransformer(BaseEstimator, TransformerMixin):
         self.categorical_encoders_ = {}
         self.numerical_features_ = []
         self.categorical_features_ = []
+        self.non_sensitive_features_ = []
         self.feature_means_ = {}
         self.group_stats_ = {}
         self.covariance_matrices_ = {}
@@ -55,9 +56,6 @@ class BiasMitigationTransformer(BaseEstimator, TransformerMixin):
 
     def _validate_input(self, X: pd.DataFrame) -> None:
         """Validate input data format and required columns."""
-        if not isinstance(X, pd.DataFrame):
-            raise TypeError("Input must be a pandas DataFrame")
-
         missing_features = set(self.sensitive_features) - set(X.columns)
         if missing_features:
             raise ValueError(f"Missing sensitive features: {missing_features}")
@@ -71,12 +69,11 @@ class BiasMitigationTransformer(BaseEstimator, TransformerMixin):
         self, X: pd.DataFrame, y: Optional[pd.Series] = None
     ) -> "BiasMitigationTransformer":
         """
-        Learn demographic group statistics to enable fair transformations.
+        Learn demographic group statistics to be used in the transformation.
 
-        Statistical disparities between groups indicate potential bias sources. By measuring
-        these differences during fitting, we can later apply corrections that move group
-        distributions toward equity while maintaining the mathematical relationships
-        necessary for accurate prediction.
+        This method calculates statistics on different demographic groups to identify
+        disparities. These statistics are then used in the transform method to adjust
+        feature distributions.
         """
         self._validate_input(X)
 
@@ -226,9 +223,9 @@ class BiasMitigationTransformer(BaseEstimator, TransformerMixin):
         """
         Adjust means while attempting to preserve feature correlation structure.
 
-        Beyond simple mean equalization, this method tries to maintain the covariance
-        relationships that are often crucial for prediction accuracy. It's more complex
-        but potentially preserves model performance better than mean matching alone.
+        This method maintains covariance relationships that can be important for
+        prediction accuracy. It is more complex but may preserve model performance
+        better than mean matching.
         """
         X_transformed = X.copy()
 

@@ -2,9 +2,9 @@
 Central orchestrator for end-to-end fairness-aware machine learning workflows.
 
 This module coordinates the three-phase fairness pipeline: baseline measurement to identify
-bias, bias mitigation to reduce disparities, and fair training to ensure equitable outcomes.
-The executor manages the complex interactions between components while maintaining full
-observability through structured logging and MLflow integration.
+bias, bias mitigation to reduce disparities, and fair training for more equitable outcomes.
+The executor manages the interactions between components and provides detailed logging
+through structured logging and MLflow integration.
 """
 
 import os
@@ -41,10 +41,9 @@ class PipelineExecutor:
     Orchestrates the complete fairness-aware machine learning workflow.
 
     The executor implements a systematic approach to fairness: first measuring baseline
-    bias to establish the scope of the problem, then applying data-level corrections
-    to reduce group disparities, and finally training models with fairness constraints
-    to ensure equitable outcomes. This three-phase approach addresses bias at multiple
-    levels while maintaining model performance.
+    bias, then applying data-level corrections to reduce group disparities, and finally
+    training models with fairness constraints for more equitable outcomes. This approach
+    addresses bias at multiple levels while maintaining model performance.
     """
 
     def __init__(
@@ -79,11 +78,11 @@ class PipelineExecutor:
 
     def execute_pipeline(self) -> Dict[str, Any]:
         """
-        Execute the three-phase fairness pipeline with full observability.
+        Execute the fairness pipeline with detailed logging.
 
-        The pipeline follows a systematic approach: baseline measurement identifies the
-        extent of bias, data processing reduces disparities through transformation,
-        and fair training ensures equitable model behavior. Each phase builds on the
+        The pipeline follows a systematic approach: baseline measurement identifies
+        bias, data processing reduces disparities through transformation, and fair
+        training promotes equitable model behavior. Each phase builds on the
         previous one while maintaining detailed logging for audit and debugging.
         """
         self.logger.log_stage_start(
@@ -234,11 +233,11 @@ class PipelineExecutor:
 
     def _generate_synthetic_data(self, n_samples: int = 1000) -> pd.DataFrame:
         """
-        Create realistic synthetic data with intentional bias patterns and real-world messiness.
+        Create synthetic data with intentional bias patterns.
 
         The generated dataset includes missing values, outliers, and correlated features
-        that mirror actual datasets while maintaining measurable bias patterns for
-        demonstrating the fairness pipeline's effectiveness.
+        to simulate real-world data, with measurable bias patterns for testing the
+        pipeline's effectiveness.
         """
         np.random.seed(self.config["data"].get("random_state", 42))
 

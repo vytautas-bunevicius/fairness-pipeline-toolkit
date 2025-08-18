@@ -1,4 +1,10 @@
-"""Bias detection and reporting functionality."""
+"""Provides tools for auditing datasets and model predictions for fairness.
+
+This module contains the BiasDetector class, which calculates key fairness
+metrics and generates reports to highlight potential biases. The goal is to
+make it easy to identify and quantify fairness issues before and after
+mitigation.
+"""
 
 from typing import Dict, Any, Optional
 import pandas as pd
@@ -11,10 +17,20 @@ from .fairness_metrics import FairnessMetrics
 
 
 class BiasDetector:
-    """Detect and report bias in datasets and model predictions."""
+    """A utility for auditing datasets and model predictions for fairness issues.
+
+    This class encapsulates the logic for calculating various fairness metrics and
+    comparing them against a defined threshold. It is used to generate standardized
+    reports that show where a model or dataset may be exhibiting bias.
+    """
 
     def __init__(self, threshold: float = 0.1):
-        """Initialize bias detector with fairness threshold."""
+        """Initializes the detector with a fairness threshold.
+
+        The threshold is used to determine whether a given fairness metric (e.g.,
+        demographic parity difference) constitutes a violation, providing a clear
+        benchmark for assessment.
+        """
         self.threshold = threshold
         self.metrics_calculator = FairnessMetrics()
         self.logger = logging.getLogger("fairness_pipeline.bias_detector")
@@ -24,7 +40,13 @@ class BiasDetector:
     def audit_dataset(
         data: pd.DataFrame, sensitive_column: str, target_column: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Audit dataset for potential bias in data distribution."""
+        """Performs a preliminary audit of a dataset for potential sources of bias.
+
+        This static method provides a quick way to assess the raw data before model
+        training. It checks for imbalanced distributions across sensitive groups and
+        differences in the target variable's rate, which are common indicators of
+        pre-existing bias.
+        """
         report = {
             "dataset_shape": data.shape,
             "sensitive_feature_distribution": data[sensitive_column]
@@ -45,7 +67,12 @@ class BiasDetector:
     def audit_predictions(
         self, y_true: np.ndarray, y_pred: np.ndarray, sensitive_features: np.ndarray
     ) -> Dict[str, Any]:
-        """Audit model predictions for fairness violations."""
+        """Audits model predictions to determine if they meet fairness criteria.
+
+        This method calculates standard fairness metrics based on the model's
+        predictions and compares them against the configured threshold to flag
+        potential violations. It returns a structured report for logging and analysis.
+        """
         metrics = self.metrics_calculator.calculate_all_metrics(
             y_true, y_pred, sensitive_features
         )
@@ -71,7 +98,12 @@ class BiasDetector:
         return report
 
     def print_report(self, report: Dict[str, Any], report_type: str = "audit"):
-        """Print and log formatted bias audit report using Rich tables."""
+        """Generates and prints a formatted bias audit report to the console.
+
+        This method uses the Rich library to create human-readable tables that clearly
+        display performance and fairness metrics. This is intended for interactive use
+        to give developers immediate feedback on the model's fairness.
+        """
         self.console.print(
             f"\n[bold blue]{report_type.upper()} REPORT[/bold blue]", style="bold blue"
         )
