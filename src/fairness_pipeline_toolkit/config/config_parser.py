@@ -475,9 +475,7 @@ class ConfigParser:
             raise ValueError(f"Invalid configuration path: {e}")
 
         if not ConfigParser._is_safe_path(config_path):
-            raise ValueError(
-                f"Potentially unsafe configuration path: {config_path}"
-            )
+            raise ValueError(f"Potentially unsafe configuration path: {config_path}")
 
         if config_path.exists():
             file_size = config_path.stat().st_size
