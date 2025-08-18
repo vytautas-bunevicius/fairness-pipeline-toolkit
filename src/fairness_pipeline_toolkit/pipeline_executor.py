@@ -23,9 +23,6 @@ import tempfile
 import warnings
 from datetime import datetime
 
-os.environ.setdefault("MLFLOW_SUPPRESS_ENVIRONMENT_WARNINGS", "1")
-warnings.filterwarnings("ignore", message=".*pip.*", module="mlflow.*")
-warnings.filterwarnings("ignore", message=".*artifact_path.*", module="mlflow.*")
 from rich.console import Console
 from rich.table import Table
 from rich import box
@@ -34,6 +31,10 @@ from .measurement.bias_detector import BiasDetector
 from .pipeline.bias_mitigation_transformer import BiasMitigationTransformer
 from .training.fairness_constrained_classifier import FairnessConstrainedClassifier
 from .config import get_pipeline_logger, setup_logging
+
+os.environ.setdefault("MLFLOW_SUPPRESS_ENVIRONMENT_WARNINGS", "1")
+warnings.filterwarnings("ignore", message=".*pip.*", module="mlflow.*")
+warnings.filterwarnings("ignore", message=".*artifact_path.*", module="mlflow.*")
 
 
 class PipelineExecutor:
