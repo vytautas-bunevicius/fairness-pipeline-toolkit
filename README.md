@@ -1,6 +1,6 @@
 # Fairness Pipeline Toolkit
 
-A comprehensive Python toolkit for implementing fairness-aware machine learning pipelines with automated bias detection, data debiasing, and fairness-constrained model training.
+A Python toolkit for building fairness-aware machine learning pipelines with bias detection, data debiasing, and fairness-constrained model training.
 
 ## Installation
 
@@ -246,9 +246,9 @@ Summary: Primary fairness goal not achieved (-0.0942 change)
 Successfully registered model 'fairness_pipeline_model'.
 ```
 
-# Creating Professional Flowcharts with Mermaid
+# Creating Flowcharts with Mermaid
 
-To create professional flowcharts with a consistent color scheme like the example, follow this template:
+To create flowcharts with a consistent color scheme like the example, follow this template:
 
 ```
 %%{init: {'theme': 'base', 'themeVariables': { 'fontFamily': 'Gordita, Figtree, sans-serif', 'primaryColor': '#B8CCF4', 'primaryTextColor': '#1A1E21', 'lineColor': '#48494C', 'fontSize': '14px'}}}%%
@@ -269,7 +269,7 @@ flowchart TD
 
 ## Style Guide
 
-This color palette provides a professional blue-purple theme with distinct colors for different process stages:
+This color palette uses a blue-purple theme with distinct colors for different process stages:
 - **prepStyle**: Purple-blue (`#7E7AE6`) - For preparation/planning steps
 - **analysisStyle**: Primary blue (`#3A5CED`) - For analytical/assessment steps
 - **decisionStyle**: Light blue (`#85A2FF`) - For decision/selection steps
@@ -322,10 +322,8 @@ flowchart TD
     classDef documentationStyle fill:#C2A9FF,stroke:#3D3270,stroke-width:2px,color:#FFFFFF,rx:4,ry:4
 ```
 
-This template provides a visually appealing and professional diagram that clearly distinguishes between different process stages while maintaining a cohesive design language through the blue-purple color palette.
+This template produces a diagram that distinguishes between process stages and uses a consistent blue-purple color palette.
 
 ## License
 
-This software is released into the public domain. You are free to use, modify, and distribute this code without any restrictions. See the LICENSE file for full details.
-
-The Unlicense promotes maximum freedom and removes all copyright restrictions, making this toolkit freely available for any use case, including commercial applications.
+This project is released under The Unlicense (public domain). See the LICENSE file for details.
