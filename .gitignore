@@ -42,3 +42,4 @@ Thumbs.db
 *.csv
 demo_data.csv
 EOF < /dev/null
+/notebooks/.ipynb_checkpoints/

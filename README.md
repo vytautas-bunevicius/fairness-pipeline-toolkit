@@ -95,13 +95,25 @@ flowchart TD
 
 ## What It Does
 
-The toolkit executes a three-step fairness pipeline:
+The toolkit executes a three-step fairness pipeline with proper data hygiene:
 
-1. **Baseline Measurement**: Analyzes raw data for bias and fairness violations
-2. **Data Processing & Training**: Applies bias mitigation and trains fair models
-3. **Final Validation**: Compares results and generates improvement reports
+1. **Baseline Measurement**: Analyzes raw data for bias and fairness violations on training data
+2. **Data Processing & Training**: Applies bias mitigation and trains fair models using validation set for tuning
+3. **Final Evaluation**: Tests final model on held-out test set for unbiased performance assessment
+
+### Data Splitting Strategy
+
+The pipeline implements a **train/validation/test split** (default: 60/20/20) to ensure robust evaluation:
+
+- **Training Set (60%)**: Used for bias mitigation fitting and initial model training
+- **Validation Set (20%)**: Used for hyperparameter tuning and model selection
+- **Test Set (20%)**: Reserved exclusively for final, unbiased evaluation
+
+This approach prevents test set contamination and provides reliable fairness assessments following ML best practices.
 
 ## Configuration
+
+### Quick Start Configuration
 
 Edit `config.yml` to define your pipeline:
 
@@ -110,7 +122,8 @@ data:
   input_path: "your_data.csv"
   target_column: "target"
   sensitive_features: ["race", "sex"]
-  test_size: 0.2
+  test_size: 0.2                               # Final test set for unbiased evaluation
+  val_size: 0.2                                # Validation set for model tuning
   random_state: 42
 
 preprocessing:
@@ -133,6 +146,193 @@ evaluation:
 mlflow:
   experiment_name: "fairness_pipeline"
   log_model: true
+```
+
+### Configuration Schema Reference
+
+Full YAML configuration with all available options:
+
+```yaml
+data:
+  input_path: "path/to/your/data.csv"          # Path to input CSV file
+  target_column: "target"                      # Target column name
+  sensitive_features: ["race", "sex"]          # List of protected attributes
+  test_size: 0.2                               # Test set ratio (default: 0.2)
+  val_size: 0.2                                # Validation set ratio (default: 0.2)
+  random_state: 42                             # Random seed for reproducibility
+
+preprocessing:
+  transformer:
+    name: "BiasMitigationTransformer"
+    parameters:
+      repair_level: 0.8                        # Bias correction level [0.0-1.0]
+      method: "mean_matching"                   # Mitigation method
+      random_state: 42
+
+training:
+  method:
+    name: "FairnessConstrainedClassifier"
+    parameters:
+      base_estimator: "LogisticRegression"     # Base ML algorithm
+      constraint: "demographic_parity"         # Fairness constraint type
+      random_state: 42
+      max_retries: 3                           # Training retry attempts
+
+evaluation:
+  primary_metric: "demographic_parity_difference"  # Primary fairness metric
+  fairness_threshold: 0.1                      # Acceptable violation threshold
+  additional_metrics: [                        # Optional additional metrics
+    "statistical_parity_difference",
+    "equal_opportunity_difference"
+  ]
+
+mlflow:
+  experiment_name: "fairness_pipeline"
+  run_name: null                               # Auto-generated if null
+  log_model: true
+  log_config: true
+  tags:
+    framework: "fairness_pipeline_toolkit"
+    version: "1.0.0"
+```
+
+### Configuration Options
+
+**Data Section**
+- `input_path`: Path to CSV file containing training data
+- `target_column`: Name of the binary target variable
+- `sensitive_features`: Protected attributes to monitor for bias
+- `test_size`: Fraction for test set (0.0-1.0, default: 0.2)
+- `val_size`: Fraction for validation set (0.0-1.0, default: 0.2)
+- `random_state`: Seed for reproducible train/validation/test splits
+
+**Preprocessing Section**
+- `repair_level`: Bias correction intensity (0.0=none, 1.0=maximum)
+- `method`: Bias mitigation technique (`mean_matching`, `reweighting`)
+
+**Training Section**
+- `base_estimator`: ML algorithm (`LogisticRegression`, `RandomForest`)
+- `constraint`: Fairness constraint (`demographic_parity`, `equalized_odds`)
+- `max_retries`: Retry attempts for convergence issues
+
+**Evaluation Section**
+- `primary_metric`: Main fairness metric to optimize
+- `fairness_threshold`: Maximum acceptable bias level
+- `additional_metrics`: Extra metrics for detailed evaluation
+
+**MLflow Section**
+- `experiment_name`: MLflow experiment identifier
+- `run_name`: Custom run name (timestamp if null)
+- `log_model`: Whether to save trained models
+- `log_config`: Whether to save configuration files
+- `tags`: Custom metadata for experiment tracking
+
+### Configuration Examples
+
+#### Example 1: Demographic Parity Strategy
+For cases where equal representation across groups is the primary goal:
+
+```yaml
+data:
+  input_path: "hiring_data.csv"
+  target_column: "hired"
+  sensitive_features: ["race", "gender"]
+  test_size: 0.2
+  val_size: 0.2
+  random_state: 42
+
+preprocessing:
+  transformer:
+    name: "BiasMitigationTransformer"
+    parameters:
+      repair_level: 0.9  # High correction for strong parity
+      method: "mean_matching"
+
+training:
+  method:
+    name: "FairnessConstrainedClassifier"
+    parameters:
+      base_estimator: "LogisticRegression"
+      constraint: "demographic_parity"
+      max_retries: 5
+
+evaluation:
+  primary_metric: "demographic_parity_difference"
+  fairness_threshold: 0.05  # Stricter threshold
+```
+
+#### Example 2: Equalized Odds Strategy
+For scenarios prioritizing equal true positive and false positive rates:
+
+```yaml
+data:
+  input_path: "lending_data.csv"
+  target_column: "loan_approved" 
+  sensitive_features: ["race", "age_group"]
+  test_size: 0.25
+  val_size: 0.15
+
+preprocessing:
+  transformer:
+    name: "BiasMitigationTransformer"
+    parameters:
+      repair_level: 0.7  # Moderate correction to preserve predictive power
+      method: "reweighting"
+
+training:
+  method:
+    name: "FairnessConstrainedClassifier"
+    parameters:
+      base_estimator: "RandomForest"
+      constraint: "equalized_odds"
+      max_retries: 3
+
+evaluation:
+  primary_metric: "equalized_odds_difference"
+  fairness_threshold: 0.1
+  additional_metrics: ["statistical_parity_difference"]
+```
+
+#### Example 3: Multi-Attribute Analysis
+For bias analysis across multiple protected attributes:
+
+```yaml
+data:
+  input_path: "medical_diagnosis.csv"
+  target_column: "diagnosis_positive"
+  sensitive_features: ["race", "gender", "age_group", "insurance_type"]
+  test_size: 0.2
+  val_size: 0.2
+
+preprocessing:
+  transformer:
+    name: "BiasMitigationTransformer"
+    parameters:
+      repair_level: 0.6  # Conservative approach for medical data
+      method: "mean_matching"
+
+training:
+  method:
+    name: "FairnessConstrainedClassifier"
+    parameters:
+      base_estimator: "LogisticRegression"
+      constraint: "equalized_odds"
+      max_retries: 5
+
+evaluation:
+  primary_metric: "equalized_odds_difference"
+  fairness_threshold: 0.08
+  additional_metrics: [
+    "demographic_parity_difference",
+    "equal_opportunity_difference"
+  ]
+
+mlflow:
+  experiment_name: "medical_fairness_analysis"
+  tags:
+    domain: "healthcare"
+    compliance: "HIPAA"
+    sensitivity: "high"
 ```
 
 ## Core Components

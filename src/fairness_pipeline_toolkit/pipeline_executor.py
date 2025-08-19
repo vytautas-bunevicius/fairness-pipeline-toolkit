@@ -108,7 +108,9 @@ class PipelineExecutor:
                     self._log_config()
 
                 self.logger.start_timer("data_loading")
-                X_train, X_test, y_train, y_test = self._load_and_split_data()
+                X_train, X_val, X_test, y_train, y_val, y_test = (
+                    self._load_and_split_data()
+                )
                 self.logger.end_timer("data_loading")
 
                 self.logger.start_timer("baseline_measurement")
@@ -116,14 +118,21 @@ class PipelineExecutor:
                 self.logger.end_timer("baseline_measurement")
 
                 self.logger.start_timer("bias_mitigation_training")
-                X_train_transformed, X_test_transformed = (
-                    self._mitigate_bias_and_train_model(X_train, X_test, y_train)
+                X_train_transformed, X_val_transformed, X_test_transformed = (
+                    self._mitigate_bias_and_train_model(
+                        X_train, X_val, X_test, y_train, y_val
+                    )
                 )
                 self.logger.end_timer("bias_mitigation_training")
 
                 self.logger.start_timer("final_evaluation")
                 results = self._evaluate_final_fairness(
-                    X_test_transformed, y_test, X_train_transformed, y_train
+                    X_test_transformed,
+                    y_test,
+                    X_val_transformed,
+                    y_val,
+                    X_train_transformed,
+                    y_train,
                 )
                 self.logger.end_timer("final_evaluation")
 
@@ -138,6 +147,7 @@ class PipelineExecutor:
                     {
                         "total_duration_ms": pipeline_duration,
                         "train_samples": len(X_train),
+                        "val_samples": len(X_val),
                         "test_samples": len(X_test),
                     },
                 )
@@ -194,8 +204,10 @@ class PipelineExecutor:
 
     def _load_and_split_data(
         self,
-    ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
-        """Load data and create train/test splits."""
+    ) -> Tuple[
+        pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, pd.Series
+    ]:
+        """Load data and create train/validation/test splits."""
         data_path = Path(self.config["data"]["input_path"])
 
         if not data_path.exists():
@@ -213,24 +225,39 @@ class PipelineExecutor:
         X = data.drop(columns=[self.config["data"]["target_column"]])
         y = data[self.config["data"]["target_column"]]
 
-        X_train, X_test, y_train, y_test = train_test_split(
+        test_size = self.config["data"].get("test_size", 0.2)
+        X_temp, X_test, y_temp, y_test = train_test_split(
             X,
             y,
-            test_size=self.config["data"].get("test_size", 0.2),
+            test_size=test_size,
             random_state=self.config["data"].get("random_state", 42),
             stratify=y,
+        )
+
+        val_size = self.config["data"].get("val_size", 0.2)
+        val_size_relative = val_size / (1 - test_size)
+
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_temp,
+            y_temp,
+            test_size=val_size_relative,
+            random_state=self.config["data"].get("random_state", 42),
+            stratify=y_temp,
         )
 
         self.logger.log_stage_complete(
             "data_split",
             {
                 "train_samples": len(X_train),
+                "val_samples": len(X_val),
                 "test_samples": len(X_test),
-                "test_size": self.config["data"].get("test_size", 0.2),
+                "train_ratio": len(X_train) / len(X),
+                "val_ratio": len(X_val) / len(X),
+                "test_ratio": len(X_test) / len(X),
             },
         )
 
-        return X_train, X_test, y_train, y_test
+        return X_train, X_val, X_test, y_train, y_val, y_test
 
     def _generate_synthetic_data(self, n_samples: int = 1000) -> pd.DataFrame:
         """
@@ -349,8 +376,13 @@ class PipelineExecutor:
             self.bias_detector.print_report(prediction_report, "BASELINE PREDICTION")
 
     def _mitigate_bias_and_train_model(
-        self, X_train: pd.DataFrame, X_test: pd.DataFrame, y_train: pd.Series
-    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        self,
+        X_train: pd.DataFrame,
+        X_val: pd.DataFrame,
+        X_test: pd.DataFrame,
+        y_train: pd.Series,
+        y_val: pd.Series,
+    ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """Apply bias mitigation transformation and train fairness-constrained model."""
         self.logger.log_stage_start("bias_mitigation")
 
@@ -372,12 +404,14 @@ class PipelineExecutor:
 
             self.transformer.fit(X_train)
             X_train_transformed = self.transformer.transform(X_train)
+            X_val_transformed = self.transformer.transform(X_val)
             X_test_transformed = self.transformer.transform(X_test)
 
             self.logger.log_stage_complete("transformer_fitting")
         else:
             self.logger.log_warning("No bias mitigation transformer specified")
             X_train_transformed = X_train.copy()
+            X_val_transformed = X_val.copy()
             X_test_transformed = X_test.copy()
 
         training_config = self.config["training"]["method"]
@@ -418,30 +452,102 @@ class PipelineExecutor:
                 self.config["data"]["sensitive_features"]
             ]
 
-            self.model.fit(X_model, y_train, sensitive_features)
+            max_retries = self.config["training"].get("max_retries", 3)
+            retry_count = 0
+            training_successful = False
+
+            while retry_count < max_retries and not training_successful:
+                try:
+                    self.model.fit(X_model, y_train, sensitive_features)
+                    training_successful = True
+                    if retry_count > 0:
+                        self.logger.logger.info(
+                            f"Training succeeded on retry {retry_count + 1}",
+                            extra={
+                                "component": "training",
+                                "retry_count": retry_count + 1,
+                            },
+                        )
+                except Exception as e:
+                    retry_count += 1
+                    if (
+                        "did not converge" in str(e).lower()
+                        or "convergence" in str(e).lower()
+                    ):
+                        if retry_count < max_retries:
+                            self.logger.log_warning(
+                                f"Training convergence issue, retrying ({retry_count}/{max_retries})",
+                                {"error": str(e), "retry_attempt": retry_count},
+                            )
+                            if hasattr(self.model.base_estimator, "max_iter"):
+                                current_max_iter = getattr(
+                                    self.model.base_estimator, "max_iter", 1000
+                                )
+                                self.model.base_estimator.max_iter = (
+                                    current_max_iter * 2
+                                )
+                            if hasattr(self.model.base_estimator, "C"):
+                                current_C = getattr(self.model.base_estimator, "C", 1.0)
+                                self.model.base_estimator.C = current_C * 0.1
+                        else:
+                            self.logger.log_error(
+                                "Training failed after maximum retries",
+                                e,
+                                {
+                                    "max_retries": max_retries,
+                                    "final_retry": retry_count,
+                                },
+                            )
+                            raise
+                    else:
+                        self.logger.log_error(
+                            "Training failed with non-convergence error", e
+                        )
+                        raise
 
             self.logger.log_stage_complete(
                 "model_training",
                 {
                     "model_fitted": True,
                     "uses_fairlearn": getattr(self.model, "use_fairlearn", False),
+                    "retry_count": retry_count,
+                    "training_successful": training_successful,
                 },
             )
 
         self.logger.log_stage_complete("bias_mitigation")
 
-        return X_train_transformed, X_test_transformed
+        return X_train_transformed, X_val_transformed, X_test_transformed
 
     def _evaluate_final_fairness(
         self,
         X_test: pd.DataFrame,
         y_test: pd.Series,
+        X_val: pd.DataFrame,
+        y_val: pd.Series,
         X_train: pd.DataFrame,
         y_train: pd.Series,
     ) -> Dict[str, Any]:
         """Evaluate final model fairness and compare with baseline metrics."""
         if self.verbose:
             self.logger.log_stage_start("final_validation")
+
+        X_val_numeric = self._prepare_features_for_modeling(
+            X_val.drop(columns=self.config["data"]["sensitive_features"]),
+            fit_scaler=False,
+        )
+        sensitive_features_val = X_val[self.config["data"]["sensitive_features"]]
+
+        y_pred_val = self.model.predict(X_val_numeric, sensitive_features_val)
+        sensitive_values_val = X_val[
+            self.config["data"]["sensitive_features"][0]
+        ].values
+        val_prediction_report = self.bias_detector.audit_predictions(
+            y_val.values, y_pred_val, sensitive_values_val
+        )
+
+        if self.verbose:
+            self.bias_detector.print_report(val_prediction_report, "VALIDATION SET")
 
         X_test_numeric = self._prepare_features_for_modeling(
             X_test.drop(columns=self.config["data"]["sensitive_features"]),
@@ -458,7 +564,7 @@ class PipelineExecutor:
 
         self.final_report = final_prediction_report
 
-        self.bias_detector.print_report(final_prediction_report, "FINAL PREDICTION")
+        self.bias_detector.print_report(final_prediction_report, "FINAL TEST SET")
 
         if self.baseline_report:
             baseline_metrics = self.baseline_report["prediction_audit"]["metrics"]
@@ -509,6 +615,7 @@ class PipelineExecutor:
 
         return {
             "baseline_report": self.baseline_report,
+            "validation_report": val_prediction_report,
             "final_report": self.final_report,
             "model": self.model,
             "transformer": self.transformer,
@@ -745,6 +852,19 @@ class PipelineExecutor:
                                 f"Skipping invalid baseline metric {metric}: {value}"
                             )
 
+            if results["validation_report"]:
+                validation_metrics = results["validation_report"]["metrics"]
+                for metric, value in validation_metrics.items():
+                    if isinstance(value, (int, float)) and not (
+                        np.isnan(value) or np.isinf(value)
+                    ):
+                        mlflow.log_metric(f"validation_{metric}", value)
+                    else:
+                        if self.verbose:
+                            self.logger.log_warning(
+                                f"Skipping invalid validation metric {metric}: {value}"
+                            )
+
             final_metrics = results["final_report"]["metrics"]
             for metric, value in final_metrics.items():
                 if isinstance(value, (int, float)) and not (
@@ -927,6 +1047,31 @@ class PipelineExecutor:
                         mlflow.log_metric(
                             f"group_size_mean_{attr}", np.mean(group_sizes)
                         )
+                        mlflow.log_metric(f"group_size_std_{attr}", np.std(group_sizes))
+                        mlflow.log_metric(f"group_count_{attr}", len(group_sizes))
+
+                        total_size = sum(group_sizes)
+                        for group_name, stats in groups.items():
+                            group_size = stats["size"]
+                            group_proportion = (
+                                group_size / total_size if total_size > 0 else 0
+                            )
+                            mlflow.log_metric(
+                                f"group_{attr}_{group_name}_size", group_size
+                            )
+                            mlflow.log_metric(
+                                f"group_{attr}_{group_name}_proportion",
+                                group_proportion,
+                            )
+
+                            if "mean" in stats:
+                                mlflow.log_metric(
+                                    f"group_{attr}_{group_name}_mean", stats["mean"]
+                                )
+                            if "std" in stats:
+                                mlflow.log_metric(
+                                    f"group_{attr}_{group_name}_std", stats["std"]
+                                )
 
                 with tempfile.NamedTemporaryFile(
                     mode="w", suffix=".json", delete=False

@@ -3,6 +3,7 @@ data:
   target_column: "target"
   sensitive_features: ["race", "sex"]
   test_size: 0.2
+  val_size: 0.2
   random_state: 42
 
 preprocessing:
