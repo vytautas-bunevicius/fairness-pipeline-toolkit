@@ -346,7 +346,6 @@ class VisualizationConfig(BaseModel):
                 if viz_config:
                     return cls._from_pyproject_dict(viz_config)
             except (IOError, tomllib.TOMLDecodeError):
-                # Fall back to defaults on any error to remain resilient.
                 pass
 
         return cls()

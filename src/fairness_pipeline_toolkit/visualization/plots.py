@@ -79,7 +79,6 @@ def _save_as_static(
         viz_config: Visualization configuration
         output_dir: Output directory path
     """
-    # Use project root instead of current working directory
     if not Path(output_dir).is_absolute():
         project_root = Path(__file__).parent.parent.parent.parent
         output_path = project_root / output_dir
@@ -88,7 +87,6 @@ def _save_as_static(
 
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Export settings from config or defaults
     export_config = getattr(viz_config, "export", None)
     fmt = getattr(export_config, "default_format", "png") if export_config else "png"
     width = getattr(export_config, "width", 1200) if export_config else 1200
